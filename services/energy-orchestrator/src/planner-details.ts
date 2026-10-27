@@ -192,7 +192,8 @@ export function buildPlannerDetails(
   const afternoonAt = Date.parse(displayedPlan?.afternoonTargetAt ?? '');
   let afternoonEstimate: PlannerDetails['afternoonEstimate'] = null;
   let chargeBreakdown: PlannerDetails['chargeBreakdown'] = null;
-  if (finite(afternoonAt) && afternoonAt >= time && validSoc(displayedPlan?.afternoonTargetSocPercent)) {
+  if (config.enabled && automation.enabled && !['disabled', 'manual_override'].includes(automation.status)
+    && finite(afternoonAt) && afternoonAt >= time && validSoc(displayedPlan?.afternoonTargetSocPercent)) {
     const deadline = new Date(afternoonAt);
     const projection = projectBatterySoc(now, telemetry, control, automation, upcomingForecasts, config, deadline);
     afternoonEstimate = { at: deadline.toISOString(),

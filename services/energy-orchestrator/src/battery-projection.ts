@@ -57,8 +57,6 @@ export function projectBatterySoc(
   if (!finite(timestamp)) return unavailable('invalid_clock');
   const manual = control.mode === 'manual' && control.automated !== true
     && !control.automationOwner && !control.automationMode;
-  if (!manual && (!config.enabled || !automation.enabled || automation.status === 'disabled')) return unavailable('disabled');
-  if (!manual && automation.status === 'manual_override') return unavailable('manual_override');
   if (!finite(config.socCapacityKwh) || config.socCapacityKwh <= 0
     || !nonnegative(config.reserveSocPercent) || config.reserveSocPercent >= 100
     || !nonnegative(config.energyBufferPercent) || config.energyBufferPercent > 100
@@ -74,7 +72,7 @@ export function projectBatterySoc(
   if (!manual && control.mode === 'manual' && (control.automated !== true || !control.automationOwner
     || !['charge', 'hold', 'supply'].includes(control.automationMode ?? ''))) return unavailable('manual_override');
   if (manual && (!control.available || control.error)) return unavailable('controller_unavailable');
-  const passive = !manual && (automation.status === 'error' || automation.status === 'blocked' || Boolean(automation.error)
+  const passive = !manual && (!config.enabled || !automation.enabled || ['disabled', 'manual_override', 'error', 'blocked'].includes(automation.status) || Boolean(automation.error)
     || !control.available || control.mode === 'unknown' || Boolean(control.error));
   const assumption = manual ? 'manual_charging' : passive ? 'passive_operation' : 'automatic_planning';
   const controllerReserve = control.limits.reserveSocPercent;
@@ -100,7 +98,8 @@ export function projectBatterySoc(
   }
   const owned = !passive && control.mode === 'manual' && control.automated === true;
   const ownedMode = control.automationMode as 'charge' | 'hold' | 'supply' | undefined;
-  if (owned && ((control.automationMode === 'charge' && (control.powerKw !== 6
+  if (owned && ((control.automationMode === 'charge' && (!nonnegative(control.powerKw) || control.powerKw > 6
+    || control.requestedPowerKw !== undefined && (!nonnegative(control.requestedPowerKw) || control.requestedPowerKw > 6 || control.powerKw > control.requestedPowerKw)
     || !finite(control.targetSocPercent) || control.targetSocPercent <= 0 || control.targetSocPercent > maximumPercent))
     || (control.automationMode === 'hold' && control.powerKw !== 0)
     || (ownedMode === 'supply' && (!finite(control.powerKw) || control.powerKw >= 0
@@ -137,6 +136,7 @@ export function projectBatterySoc(
   let supplySettings = ownedMode === 'supply' ? { minimumSocPercent: control.minimumSocPercent!,
     maxDischargeKw: Math.abs(control.powerKw!) } : null;
   let targetEnergy = manual || owned && control.automationMode === 'charge' ? control.targetSocPercent! / 100 * capacity : energy;
+  let automaticPowerKw = owned && ownedMode === 'charge' ? control.powerKw! : 6;
   const scheduledEvaluation = Date.parse(automation.nextEvaluationAt ?? '');
   let nextEvaluation = manual ? Infinity : owned ? finite(scheduledEvaluation) ? Math.max(timestamp, scheduledEvaluation)
     : (Math.floor(timestamp / quarterMs) + 1) * quarterMs : timestamp;
@@ -182,6 +182,7 @@ export function projectBatterySoc(
         { ...control.limits, revertTimeoutSeconds: fallback });
       if (plan.action === 'blocked' || !finite(plan.targetSocPercent)) { reason = plan.reason; break; }
       targetEnergy = plan.targetSocPercent / 100 * capacity;
+      automaticPowerKw = plan.powerKw;
       mode = plan.action === 'charge' ? 'charge' : 'hold';
       nextEvaluation = (Math.floor(at / quarterMs) + 1) * quarterMs;
     }
@@ -200,7 +201,7 @@ export function projectBatterySoc(
     const householdPower = household.estimatedConsumptionKwh * hourMs / (Date.parse(household.end) - Date.parse(household.start)) + carKwh / duration;
     const solarPower = solar.estimatedProductionKwh * hourMs / (Date.parse(solar.end) - Date.parse(solar.start));
     const netPower = householdPower - solarPower;
-    const chargePower = batteryChargeAllowanceKw(householdPower, manual ? manualPowerKw! : 6);
+    const chargePower = batteryChargeAllowanceKw(householdPower, manual ? manualPowerKw! : automaticPowerKw);
     const passiveChargePower = batteryChargeAllowanceKw(householdPower, solarChargePower);
     if (mode === 'charge' && (manual ? energy >= targetEnergy : energy >= targetEnergy - capacity * .0002)) {
       mode = manual ? 'normal' : 'hold';

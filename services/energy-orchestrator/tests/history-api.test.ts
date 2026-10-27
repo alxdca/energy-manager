@@ -169,3 +169,24 @@ test('forecast battery observations await database history and isolate asynchron
   assert.equal(unavailable.battery.observed.status, 'error');
   assert.deepEqual(unavailable.battery.observed.points, []);
 });
+
+test('history allows the seventh future Zurich day and blocks later dates before reading storage', async () => {
+  const { day } = await fixture();
+  for (const [timestamp, limit, blocked] of [
+    ['2026-03-28T23:30:00Z', '2026-04-05', '2026-04-06'],
+    ['2026-10-24T22:30:00Z', '2026-11-01', '2026-11-02'],
+    ['2026-12-31T23:30:00Z', '2027-01-08', '2027-01-09'],
+  ]) {
+    const reads: string[] = [];
+    const api = createApi({ now: () => new Date(timestamp), historyReader: {
+      async day(date) { reads.push(date); return { ...day, date }; },
+    } });
+    assert.equal((await api.request(`/api/history/day?date=${limit}`)).status, 200);
+    const response = await api.request(`/api/history/day?date=${blocked}`);
+    assert.equal(response.status, 400); assert.equal((await response.json()).maxDate, limit);
+    assert.equal((await api.request('/api/history/day?date=2030-01-01')).status, 400);
+    assert.equal((await api.request('/api/history/day?date=2020-01-01')).status, 200);
+    assert.deepEqual(reads, [limit, '2020-01-01']);
+    assert.equal((await api.request('/api/forecast/week')).status, 404);
+  }
+});

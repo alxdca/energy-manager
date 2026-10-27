@@ -12,7 +12,7 @@ Energy Manager brings those questions into one local dashboard. It connects a Fr
 ## From a quick glance to a charging plan
 
 - **Follow the energy.** An animated flow diagram connects solar, the grid, your home battery, the car and household demand. Live readings refresh every ten seconds; stale and missing values have distinct states.
-- **Look ahead.** Today and tomorrow's solar forecasts sit beside household consumption estimates, weather and temperatures. Données adds a seven-day outlook for production, consumption and battery charge, with links to each day's detailed charts. Optional east–west roof settings account for panel orientation.
+- **Look ahead.** Today and tomorrow's solar forecasts sit beside household consumption estimates, weather and temperatures. Données shows production, consumption and battery forecasts in its daily chart and table, up to seven days ahead. Optional east–west roof settings account for panel orientation.
 - **Compare predictions with reality.** Browse saved solar production, household consumption and battery state of charge by date, in quarter-hour or hourly views. Charts preserve gaps instead of inventing measurements.
 - **Stay in control.** Set battery charging power and an optional SOC target, return to normal inverter operation, or select Wattpilot Normal, Eco or Pause with per-phase current limits.
 - **Let charging follow your priorities.** Optional automation coordinates the home battery and car around low-tariff windows, solar availability, reserves and morning charge requirements. Manual actions pause automatic control.

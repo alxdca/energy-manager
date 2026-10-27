@@ -1,4 +1,4 @@
-import { historyGroups, defaultHistorySelection, allHistorySelection, historyTable, formatHistoryValue, validHistoryDate, shiftHistoryDate, todayInZurich } from './history-data.js';
+import { historyGroups, defaultHistorySelection, allHistorySelection, historyTable, formatHistoryValue, validHistoryDate, shiftHistoryDate, todayInZurich, latestHistoryDate } from './history-data.js';
 
 const storageKey = 'energy-manager-history-columns-v2';
 const pageSize = 100;
@@ -26,6 +26,29 @@ export async function requestHistoryJson(url, signal) {
 
 const chartNumber = new Intl.NumberFormat('fr-CH', { maximumFractionDigits: 0 });
 const chartTime = new Intl.DateTimeFormat('fr-CH', { timeZone: 'Europe/Zurich', hourCycle: 'h23', hour: '2-digit', minute: '2-digit' });
+
+export function batteryForecastMessage(day) {
+  if (!day || day.date < todayInZurich()) return '';
+  const projection = day.historicalEstimated?.projection;
+  if (!projection) return '';
+  const reasons = {
+    soc_unavailable: 'niveau de charge récent indisponible',
+    forecast_unavailable: 'prévisions solaires ou de consommation incomplètes',
+    car_forecast_unavailable: 'prévision de recharge voiture indisponible',
+    car_coordination_unavailable: 'coordination avec la voiture indisponible',
+    manual_override: 'commande manuelle non confirmée',
+    manual_charge_invalid: 'paramètres de charge manuelle indisponibles',
+    owned_charge_invalid: 'paramètres de charge automatique indisponibles',
+    controller_unavailable: 'contrôleur indisponible',
+    controller_limits: 'limites du contrôleur indisponibles',
+    awaiting_evaluation: 'en attente du prochain bilan',
+  };
+  if (projection.status === 'unavailable' || projection.reason) {
+    const prefix = projection.status === 'available' ? 'Prévision batterie partielle' : 'Prévision batterie indisponible';
+    return `${prefix} : ${reasons[projection.reason] ?? 'données nécessaires indisponibles'}.`;
+  }
+  return projection.assumption === 'passive_operation' ? 'Batterie prévue selon la production et la consommation, sans recharge programmée.' : '';
+}
 
 export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
   const model = historyTable(day, allHistorySelection, 'quarter');
@@ -127,72 +150,6 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
   }
 }
 
-export function renderWeekForecast(data, body) {
-  const number = new Intl.NumberFormat('fr-CH', { maximumFractionDigits: 1 });
-  const dateFormat = new Intl.DateTimeFormat('fr-CH', { timeZone: 'Europe/Zurich', weekday: 'short', day: 'numeric', month: 'short' });
-  const fragment = document.createDocumentFragment();
-  const days = data?.days;
-  if (!Array.isArray(days) || days.length !== 7 || days.some((day, index) => !validHistoryDate(day?.date)
-    || index > 0 && day.date !== shiftHistoryDate(days[index - 1].date, 1))) throw new Error('Prévisions invalides.');
-  for (const day of days) {
-    const row = document.createElement('tr');
-    const heading = document.createElement('th'); heading.scope = 'row';
-    const link = document.createElement('a'); link.href = `/donnees?date=${encodeURIComponent(day.date)}`;
-    link.textContent = dateFormat.format(new Date(`${day.date}T12:00:00Z`));
-    heading.append(link); row.append(heading);
-    for (const key of ['productionKwh', 'consumptionKwh', 'batteryEndSocPercent', 'batteryMinSocPercent']) {
-      const cell = document.createElement('td'), value = day[key];
-      const known = typeof value === 'number' && Number.isFinite(value) && value >= 0 && (!key.startsWith('battery') || value <= 100);
-      cell.textContent = known ? `≈ ${number.format(value)}` : '—';
-      if (key === 'productionKwh' && day.solarStatus === 'stale') {
-        cell.dataset.stale = 'true'; cell.title = 'Prévision solaire conservée · à actualiser';
-      }
-      if (key === 'consumptionKwh') cell.title = ({ configured_baseline: 'Base configurée', recent_average: 'Moyenne récente',
-        measured_history: 'Profil appris', mixed: 'Profil complété' })[day.consumptionSource] ?? 'Consommation indisponible';
-      row.append(cell);
-    }
-    fragment.append(row);
-  }
-  body.replaceChildren(fragment);
-}
-
-function initializeWeekForecast() {
-  const body = document.getElementById('week-days');
-  if (!body) return;
-  const status = document.getElementById('week-status'), button = document.getElementById('week-refresh');
-  let controller = null, timer;
-  async function refresh() {
-    if (document.hidden || controller) return;
-    clearTimeout(timer);
-    const current = new AbortController(); controller = current; button.disabled = true;
-    try {
-      const data = await requestHistoryJson('/api/forecast/week', current.signal);
-      if (current.signal.aborted) return;
-      renderWeekForecast(data, body);
-      status.textContent = data.days.some(day => [day.productionKwh, day.consumptionKwh, day.batteryEndSocPercent].some(value => value === null))
-        ? 'Certaines prévisions sont indisponibles.' : 'Prévisions enregistrées · Europe/Zurich';
-    } catch {
-      if (!current.signal.aborted) {
-        body.replaceChildren(); status.textContent = 'Prévisions indisponibles. Réessayez avec Actualiser.';
-      }
-    } finally {
-      if (controller === current) {
-        controller = null; button.disabled = false;
-        if (!document.hidden) timer = setTimeout(refresh, 60000);
-      }
-    }
-  }
-  const pause = () => {
-    clearTimeout(timer); const current = controller; controller = null; current?.abort(); button.disabled = false;
-  };
-  button.addEventListener('click', refresh);
-  window.addEventListener('household-forecast-updated', refresh);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); else void refresh(); });
-  window.addEventListener('pagehide', pause);
-  window.addEventListener('pageshow', () => { void refresh(); });
-  void refresh();
-}
-
 function initializeHistory() {
   const byId = id => document.getElementById(`history-${id}`);
   const elements = Object.fromEntries(['date', 'aggregation', 'date-form', 'previous', 'next', 'today', 'load', 'selection-count', 'field-groups',
@@ -211,6 +168,11 @@ function initializeHistory() {
   const viewFromUrl = url => url.searchParams.get('view') === 'hour' ? 'hour' : 'quarter';
   const cache = new Map();
   const state = { day: null, view: viewFromUrl(initialUrl), dayLoading: false, dayError: '', generation: 0, controller: null, page: 0, date: '' };
+  const initialDate = value => validHistoryDate(value ?? '') ? (value > latestHistoryDate() ? latestHistoryDate() : value) : todayInZurich();
+  function updateNavigation() {
+    elements.date.max = latestHistoryDate();
+    elements.next.disabled = state.date >= elements.date.max;
+  }
   const inputs = new Map();
   const make = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -315,6 +277,17 @@ function initializeHistory() {
     }
     elements.results.replaceChildren(fragment);
     elements['chart-frequency'].textContent = `Solaire : ${state.view === 'quarter' ? '15 min' : '1 h'} · Maison et batterie : 15 min`;
+    const batteryStatus = byId('battery-status');
+    if (batteryStatus) {
+      batteryStatus.textContent = batteryForecastMessage(state.day);
+      batteryStatus.hidden = !batteryStatus.textContent;
+    }
+    const solarStatus = byId('solar-status'), solar = state.day?.solarForecast;
+    if (solarStatus) {
+      solarStatus.textContent = state.day?.date >= todayInZurich() && solar && solar.status !== 'online'
+        ? `${solar.status === 'stale' ? 'Prévision solaire conservée' : 'Prévision solaire indisponible'}${solar.error ? ` : ${solar.error}` : '.'}` : '';
+      solarStatus.hidden = !solarStatus.textContent;
+    }
     if (state.day) renderHistoryChart(state.day, elements.chart, elements['chart-svg'], elements['chart-status'], state.view);
     else {
       elements.chart.hidden = true;
@@ -333,9 +306,17 @@ function initializeHistory() {
   }
   async function loadDate(value, writeUrl = true, replace = false) {
     if (!validHistoryDate(value)) { elements.error.hidden = false; elements['error-text'].textContent = 'Choisissez une date valide.'; return; }
+    updateNavigation();
+    if (value > elements.date.max) {
+      elements.date.value = state.date;
+      elements.error.hidden = false;
+      elements['error-text'].textContent = 'Les prévisions sont limitées aux sept prochains jours.';
+      return;
+    }
     state.controller?.abort(); const controller = new AbortController(); state.controller = controller;
     const generation = ++state.generation;
     state.date = value; elements.date.value = value; state.day = null; state.page = 0;
+    updateNavigation();
     elements.aggregation.value = state.view;
     state.dayError = ''; state.dayLoading = true;
     elements['day-summary'].textContent = 'Lecture de la journée sélectionnée…';
@@ -368,16 +349,18 @@ function initializeHistory() {
   });
   elements['date-form'].addEventListener('submit', event => { event.preventDefault(); cache.clear(); void loadDate(elements.date.value); });
   elements.previous.addEventListener('click', () => { const date = shiftHistoryDate(elements.date.value, -1); if (date) void loadDate(date); });
-  elements.next.addEventListener('click', () => { const date = shiftHistoryDate(elements.date.value, 1); if (date) void loadDate(date); });
+  elements.next.addEventListener('click', () => { if (!elements.next.disabled) { const date = shiftHistoryDate(elements.date.value, 1); if (date) void loadDate(date); } });
   elements.today.addEventListener('click', () => { void loadDate(todayInZurich()); });
   elements.retry.addEventListener('click', () => { cache.clear(); void loadDate(elements.date.value); });
   window.addEventListener('household-forecast-updated', () => { cache.clear(); void loadDate(elements.date.value, false); });
   window.addEventListener('popstate', () => {
     const url = new URL(location.href);
     state.view = viewFromUrl(url);
-    const date = url.searchParams.get('date'); void loadDate(validHistoryDate(date ?? '') ? date : todayInZurich(), false);
+    const requested = url.searchParams.get('date'), date = initialDate(requested);
+    void loadDate(date, date !== requested, true);
   });
   function updateClock() {
+    updateNavigation();
     const now = new Date(), date = document.getElementById('local-date'), time = document.getElementById('local-time');
     if (date) date.textContent = new Intl.DateTimeFormat('fr-CH', { timeZone: 'Europe/Zurich', weekday: 'short', day: 'numeric', month: 'short' }).format(now);
     if (time) time.textContent = new Intl.DateTimeFormat('fr-CH', { timeZone: 'Europe/Zurich', hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }).format(now);
@@ -388,7 +371,7 @@ function initializeHistory() {
     if (event.persisted) { cache.clear(); clearInterval(clockTimer); clockTimer = setInterval(updateClock, 1000); void loadDate(elements.date.value, false); }
   });
   updateSelection(); const requestedDate = initialUrl.searchParams.get('date');
-  void loadDate(validHistoryDate(requestedDate ?? '') ? requestedDate : todayInZurich(), true, true);
+  void loadDate(initialDate(requestedDate), true, true);
 }
 
-if (typeof document !== 'undefined' && document.getElementById('history-view')) { initializeHistory(); initializeWeekForecast(); }
+if (typeof document !== 'undefined' && document.getElementById('history-view')) initializeHistory();

@@ -11,6 +11,9 @@ import type { Telemetry } from '../src/status.js';
 import type { BatteryProjection } from '../src/battery-projection.js';
 import { createHouseholdService } from '../src/household-service.js';
 import { householdDaySlots } from '../src/household-model.js';
+import { createEstimateService } from '../src/estimate-service.js';
+import { forecastDayOffsets } from '../src/forecast-horizon.js';
+import type { AutomationStatus } from '../src/automation.js';
 
 // Only this explicitly supplied disposable database authorizes schema deletion.
 // Operational DATABASE_URL is never read by the integration suite.
@@ -273,7 +276,7 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
     const today = await history.historyReader.day(date, now);
     assert.ok(today.householdPredictions!.every(p => p.start >= at), 'no retroactive forecasts');
     now = new Date(advance(60)); await service.train();
-    assert.equal(await f.count('household_training'), 2); assert.equal(await f.count('household_forecasts'), 6);
+    assert.equal(await f.count('household_training'), 2); assert.equal(await f.count('household_forecasts'), 18);
     const firstVersion = (await f.admin.query('SELECT forecast FROM energy_history.household_forecasts WHERE target_date=$1 ORDER BY issued_at LIMIT 1', ['2026-01-16'])).rows[0].forecast;
     assert.deepEqual(firstVersion, original, 'manual training preserves every earlier forecast revision');
     const latest = await history.householdArchive.readForecast('2026-01-16');
@@ -293,10 +296,12 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
     for (let i = 0; i < 4; i++) await f.admin.query('INSERT INTO energy_history.house_observations VALUES ($1,500)', [advance(-30 - i * 900)]);
     now = new Date(advance(60)); await service.train();
     const average = await history.householdArchive.readForecast('2026-01-16');
-    assert.equal(average!.source, 'recent_average'); near(average!.estimatedConsumptionKwh, 48);
+    assert.equal(average!.source, 'mixed');
+    assert.equal(average!.fallback!.source, 'recent_average'); near(average!.estimatedConsumptionKwh, 48);
     const chart = await history.historyReader.day('2026-01-16', now);
     assert.equal(chart.householdPredictions!.length, 96);
-    assert.ok(chart.householdPredictions!.every(p => p.source === 'recent_average' && p.estimatedConsumptionKwh === .5));
+    assert.ok(chart.householdPredictions!.every(p => ['learned_profile', 'recent_average'].includes(p.source!) && p.estimatedConsumptionKwh === .5));
+    assert.equal(chart.householdPredictions!.filter(p => p.source === 'learned_profile').length, 4);
     const original = (await f.admin.query('SELECT forecast FROM energy_history.household_forecasts WHERE target_date=$1 ORDER BY issued_at LIMIT 1', ['2026-01-16'])).rows[0].forecast;
     assert.deepEqual(original, baseline);
     assert.ok((await history.historyReader.day(date, now)).householdPredictions!.every(p => p.start >= at), 'fallback never backfills past forecasts');
@@ -476,6 +481,52 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
     assert.equal(await f.count('solar_observations'), 1);
     const third = await f.open(() => now);
     assert.equal((await third.historyReader.day(date, now)).observations!.solar[0].value, 250);
+  });
+
+  await t.test('saved solar gaps recover after restart and battery targets reach the seventh history day', async t => {
+    const f = await database(t); let now = new Date('2026-10-27T12:00:00Z'); let history = await f.open(() => now);
+    const config = { latitude: 47.3, longitude: 8.5, locationName: 'Test', arrayPowerKw: 8.5,
+      performanceRatio: .85, panelTiltDegrees: 15, eastFraction: .5 };
+    const automation: AutomationStatus = { enabled: false, status: 'disabled', lastEvaluatedAt: null,
+      nextEvaluationAt: null, targetSocPercent: null, holdUntil: null, reason: 'disabled', plan: null, error: null };
+    const targetDate = (offset: number) => new Date(Date.parse(`2026-10-27T00:00:00Z`) + offset * 86400000).toISOString().slice(0, 10);
+    let failSomeDays = false;
+    const service = () => createEstimateService({ forecastConfig: config, consumption: { baselinePowerW: 1000 },
+      automationConfig: { enabled: false, socCapacityKwh: 60, reserveSocPercent: 5, energyBufferPercent: 5,
+        minimumEnergyBufferKwh: 1, afternoonTargetSocPercent: 80 }, now: () => now,
+      async readSolar(offset) {
+        if (failSomeDays && [2, 3, 4].includes(offset)) throw new Error('Temporary provider failure');
+        const consumption = estimateConsumption(targetDate(offset), { baselinePowerW: 1000 });
+        return { ...emptySolarForecast(targetDate(offset), config), status: 'online' as const, fetchedAt: now.toISOString(),
+          hourly: consumption.hourly.map(p => ({ start: p.start, end: p.end, estimatedProductionKwh: 1, temperatureC: null })),
+          quarterHourly: consumption.quarterHourly.map(p => ({ start: p.start, end: p.end, estimatedProductionKwh: .25, temperatureC: null })),
+          estimatedProductionKwh: consumption.dayHours };
+      },
+      readSavedSolarForecast: async day => (await history.readForecast(day))?.forecast ?? null,
+      readTelemetry: async () => telemetry(now.toISOString(), 50),
+      readControl: async () => ({ available: true, mode: 'auto' as const, powerKw: null, targetSocPercent: null,
+        limits: { maxPowerKw: 6, maxSocPercent: 100, reserveSocPercent: 5 }, error: null }),
+      readAutomation: () => automation, evaluateAutomation: async () => {},
+      publishForecasts: batch => history.publishForecasts(batch),
+    });
+    await service().recalculate();
+    await history.close(); history = await f.open(() => now);
+    now = new Date(now.getTime() + 900000); failSomeDays = true;
+    const restarted = service(); await restarted.recalculate();
+    assert.equal(restarted.projection().status, 'available');
+    assert.equal(restarted.projection().reason, null);
+    assert.equal(restarted.projection().assumption, 'passive_operation');
+    for (const offset of forecastDayOffsets.slice(1, 8)) {
+      const day = await history.historyReader.day(targetDate(offset), now);
+      assert.equal(day.solarEstimates.length, 96, `solar coverage for day ${offset}`);
+      assert.ok(day.historicalEstimated.points.length >= 96, `battery coverage for day ${offset}`);
+      assert.ok(day.historicalEstimated.points.every(p => p.socPercent === 50));
+      assert.equal(day.historicalEstimated.projection?.status, 'available');
+    }
+    assert.equal((await history.readForecast(targetDate(2)))!.forecast.status, 'stale');
+    assert.equal((await history.readForecast(targetDate(3)))!.forecast.status, 'stale');
+    assert.equal((await history.readForecast(targetDate(4)))!.forecast.status, 'stale');
+    assert.equal((await history.readForecast(targetDate(5)))!.forecast.status, 'online');
   });
 
   await t.test('malformed finalized checkpoints fail closed without resetting durable data', async t => {

@@ -212,5 +212,3 @@ body[data-page=previsions] .forecast-panel{margin-top:0;max-width:760px}
 @media(max-width:700px){.planner-grid{grid-template-columns:1fr;gap:16px}.planner-panel{padding:20px 16px}.planner-panel .panel-heading{flex-wrap:wrap;gap:10px}.planner-metrics>div{gap:12px}.planner-metrics dd{font-size:13px;max-width:55%}.planner-decision{font-size:15px}}
 
 @media(min-width:701px) and (max-width:850px){.sidebar{gap:12px;padding-left:18px;padding-right:18px}.sidebar .brand{font-size:14px}.sidebar nav .nav-link{padding:9px 8px;gap:6px}}
-
-.forecast-week-link{display:block;color:var(--teal);font-size:12px;padding:8px 4px;text-underline-offset:3px}

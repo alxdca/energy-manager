@@ -538,9 +538,6 @@ test('invalid SOC, manual overrides and invalid planning limits return an empty 
     { ...telemetry(now), observedAt: '2026-10-24T14:59:29Z' }, { ...telemetry(now), observedAt: '2026-10-24T15:00:06Z' } ]) {
     assert.deepEqual(projectBatterySoc(now, actual, controller, automation, data, config).points, []);
   }
-  for (const state of [{ ...automation, enabled: false }, { ...automation, status: 'manual_override' as const }]) {
-    assert.equal(projectBatterySoc(now, telemetry(now), controller, state, data, config).status, 'unavailable');
-  }
   for (const control of [{ ...controller, mode: 'manual' as const }, { ...controller, limits: { ...controller.limits, reserveSocPercent: null } },
     { ...controller, limits: { ...controller.limits, maxSocPercent: 4 } }]) {
     assert.equal(projectBatterySoc(now, telemetry(now), control, automation, data, config).status, 'unavailable');
@@ -571,7 +568,7 @@ test('malformed, shifted and incomplete forecasts are ignored without filling a 
 test('invalid capacity, reserve, margin or controller power never produce an estimate', () => {
   const now = new Date('2026-10-24T15:00:00Z');
   const data = [forecast('2026-10-24', now)];
-  for (const settings of [{ ...config, enabled: false }, { ...config, socCapacityKwh: 0 },
+  for (const settings of [{ ...config, socCapacityKwh: 0 },
     { ...config, socCapacityKwh: NaN }, { ...config, reserveSocPercent: 100 },
     { ...config, energyBufferPercent: -1 }, { ...config, minimumEnergyBufferKwh: 61 },
     { ...config, afternoonTargetSocPercent: -1 }, { ...config, afternoonTargetSocPercent: 101 },
@@ -594,4 +591,35 @@ test('temperature data is not required, inputs remain unchanged and no future cu
   assert.equal(result.status, 'available');
   assert.deepEqual(inputs, before);
   assert.equal(result.assumption, 'automatic_planning');
+});
+
+test('disabled automation keeps a continuous passive forecast through seven future days without scheduled grid charging', () => {
+  const now = new Date('2026-10-24T10:05:00Z');
+  const data = Array.from({ length: 8 }, (_, offset) => forecast(new Date(Date.UTC(2026, 9, 24 + offset)).toISOString().slice(0, 10), now));
+  const until = getCalendarDayBounds(new Date('2026-10-31T00:00:00Z')).end;
+  const result = projectBatterySoc(now, telemetry(now, 50), controller,
+    { ...automation, enabled: false, status: 'disabled' }, data, { ...config, enabled: false }, until);
+  assert.equal(result.status, 'available'); assert.equal(result.reason, null);
+  assert.equal(result.assumption, 'passive_operation');
+  assert.equal(result.points.at(-1)!.at, until.toISOString());
+  close(result.points[1].socPercent, 50 - 1 / efficiency / 12 / 60 * 100);
+  close(result.points.at(-1)!.socPercent, 5);
+  close(result.energyBalance!.gridKwh, 0);
+  for (const state of [{ ...automation, enabled: false }, { ...automation, status: 'manual_override' as const }]) {
+    assert.equal(projectBatterySoc(now, telemetry(now), controller, state, data, config, new Date(now.getTime() + 3600000)).assumption,
+      'passive_operation');
+  }
+});
+
+test('limited automatic charging uses confirmed power until the next evaluation, including a zero-power hold', () => {
+  const now = new Date('2026-10-24T14:31:00Z');
+  const state = { ...automation, status: 'charging' as const, nextEvaluationAt: '2026-10-24T14:45:00Z' };
+  for (const powerKw of [0, 2, 4.5]) {
+    const control = { ...controller, mode: 'manual' as const, automated: true, automationOwner: 'owner',
+      automationMode: 'charge' as const, powerKw, requestedPowerKw: 6, targetSocPercent: 50 };
+    const result = projectBatterySoc(now, telemetry(now, 20), control, state,
+      [forecast('2026-10-24', now)], config, new Date('2026-10-24T14:41:00Z'));
+    assert.equal(result.status, 'available'); assert.equal(result.assumption, 'automatic_planning');
+    close(result.points.at(-1)!.socPercent, 20 + powerKw * efficiency * (10 / 60) / 60 * 100);
+  }
 });

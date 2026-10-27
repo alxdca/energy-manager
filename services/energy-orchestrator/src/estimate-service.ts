@@ -31,6 +31,8 @@ interface EstimateOptions {
   consumption: ConsumptionConfig;
   automationConfig: AutomationConfig;
   readSolar(offset: ForecastDayOffset): Promise<SolarForecast>;
+  /** Restore complete saved future days if a provider refresh fails after restart. */
+  readSavedSolarForecast?(date: string): Promise<SolarForecast | null>;
   readTelemetry(): Promise<Telemetry>;
   readControl(): Promise<AutomationControllerState & { automated?: boolean; chargeEstimate?: BatteryChargeEstimate }>;
   readAutomation(): AutomationStatus;
@@ -104,22 +106,33 @@ export function createEstimateService(options: EstimateOptions) {
     const dates = forecastDayOffsets.map(offset => dateAt(at, offset));
     const solarHour = Math.floor(at.getTime() / hourMs);
     const refreshSolar = lastSolarHour === null || (Math.floor(at.getTime() / quarterMs) % 4 === 0 && solarHour !== lastSolarHour);
+    // Retry missing days at the next scheduled batch without refetching usable profiles.
+    const solarOffsets = refreshSolar ? forecastDayOffsets
+      : forecastDayOffsets.filter(offset => rawSolar.get(dates[offset])?.status === 'offline');
+    const refreshedDates = new Set(solarOffsets.map(offset => dates[offset]));
     let nextSolar = rawSolar;
-    if (refreshSolar) {
-      const values = await Promise.all(forecastDayOffsets.map(async (offset) => {
+    if (solarOffsets.length) {
+      const values = await Promise.all(solarOffsets.map(async (offset) => {
         let next: SolarForecast;
         try {
           const value = await options.readSolar(offset);
           next = value.date === dates[offset] ? value : emptySolarForecast(dates[offset], options.forecastConfig);
         } catch (error) { report(error); next = emptySolarForecast(dates[offset], options.forecastConfig); }
-        const previous = rawSolar.get(dates[offset]);
+        let previous = rawSolar.get(dates[offset]);
+        if (!hasUsableForecast(next, at.getTime()) && (!previous || !hasUsableForecast(previous, at.getTime())) && options.readSavedSolarForecast) {
+          const saved = await options.readSavedSolarForecast(dates[offset]);
+          if (saved?.date === dates[offset] && hasUsableForecast(saved, at.getTime()) && solarIntervals(saved)
+            && ['model', 'arrayPowerKw', 'performanceRatio', 'panelTiltDegrees', 'eastFraction', 'locationName'].every(key =>
+              saved[key as keyof SolarForecast] === next[key as keyof SolarForecast])) previous = saved;
+        }
         // Keep the complete snapshot for this date, including forecasts prefetched before midnight.
         if (!hasUsableForecast(next, at.getTime()) && previous && hasUsableForecast(previous, at.getTime())) {
           next = { ...previous, status: 'stale', error: next.error };
         }
         return structuredClone(next);
       }));
-      nextSolar = new Map(values.map(value => [value.date, value]));
+      nextSolar = new Map([...rawSolar].filter(([date]) => dates.includes(date)));
+      for (const value of values) nextSolar.set(value.date, value);
     }
     const restored = new Map(await Promise.all(dates.map(async date => {
       const previous = completed?.forecasts.get(date);
@@ -137,7 +150,7 @@ export function createEstimateService(options: EstimateOptions) {
     for (const date of dates) {
       const model = nextSolar.get(date) ?? emptySolarForecast(date, options.forecastConfig);
       const previous = completed?.forecasts.get(date);
-      let solar = !refreshSolar && previous
+      let solar = !refreshedDates.has(date) && previous
         ? { ...model, quarterHourly: previous.quarterHourly, hourly: previous.hourly, estimatedProductionKwh: previous.estimatedProductionKwh }
         : retainSolar(previous, model, solarAt);
       const intervals = solarIntervals(solar);

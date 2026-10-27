@@ -143,6 +143,12 @@ const estimates = createEstimateService({
   refreshHousehold: () => household.refresh(),
   forecastConfig, consumption, automationConfig,
   readSolar: offset => solarReaders[offset](),
+  readSavedSolarForecast: async date => {
+    const saved = await history.readForecast(date);
+    if (!saved) return null;
+    const { consumption: _consumption, carCharging: _car, forecastPeriod: _period, ...solar } = saved.forecast;
+    return solar;
+  },
   readTelemetry: telemetry,
   readControl: async () => (await controls.readStatus({ liveEstimate: true, includeCar: false })).battery,
   readAutomation: () => automation.status(),

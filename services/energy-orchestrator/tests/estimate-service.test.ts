@@ -96,7 +96,8 @@ function fixture(origin = '2026-10-25T12:07:00Z', prepareCarForecasts?: Paramete
   captureSolar?: (forecasts: SolarForecast[], at: Date) => void | Promise<void>,
   captureEnergy?: (forecasts: EnergyForecast[], at: Date) => void | Promise<void>,
   readSolarHistory?: (date: string) => Promise<SolarEstimatePoint[]>,
-  readEnergyHistory?: (date: string) => Promise<EnergyEstimatePoint[]>) {
+  readEnergyHistory?: (date: string) => Promise<EnergyEstimatePoint[]>,
+  readSavedSolarForecast?: (date: string) => Promise<SolarForecast | null>) {
   let clock = new Date(origin);
   const forecastConfig: ForecastConfig = { latitude: 12.34, longitude: 56.78, locationName: 'Test',
     arrayPowerKw: 8.5, performanceRatio: .85, panelTiltDegrees: 15, eastFraction: .5 };
@@ -114,14 +115,14 @@ function fixture(origin = '2026-10-25T12:07:00Z', prepareCarForecasts?: Paramete
   const records: Array<{ projection: BatteryProjection; at: string }> = [];
   let published: ForecastBatch | null = null;
   const gates: { evaluate?: ReturnType<typeof deferred>; telemetry?: ReturnType<typeof deferred>; publish?: ReturnType<typeof deferred> } = {};
-  const state = { quarterSolar: false, soc: 60, solarLevel: 3, temperature: 10, failSolar: false, failTelemetry: false, failControl: false, failPublication: false };
+  const state = { quarterSolar: false, soc: 60, solarLevel: 3, temperature: 10, failSolar: false, failSolarOffsets: new Set<number>(), failTelemetry: false, failControl: false, failPublication: false };
   const date = (offset = 0) => new Date(Date.parse(`${getLocalDate(clock)}T00:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
   const now = () => new Date(clock);
   const service = createEstimateService({
-    forecastConfig, automationConfig, consumption, now, prepareCarForecasts, readSolarHistory, readEnergyHistory,
+    forecastConfig, automationConfig, consumption, now, prepareCarForecasts, readSolarHistory, readEnergyHistory, readSavedSolarForecast,
     async readSolar(offset) {
       calls.solar.push({ offset, at: clock.toISOString() });
-      if (state.failSolar) throw new Error('weather unavailable');
+      if (state.failSolar || state.failSolarOffsets.has(offset)) throw new Error('weather unavailable');
       const bounds = getCalendarDayBounds(new Date(`${date(offset)}T00:00:00Z`));
       const hourly = Array.from({ length: (bounds.end.getTime() - bounds.start.getTime()) / hourMs }, (_, index) => {
         const start = new Date(bounds.start.getTime() + index * hourMs);
@@ -990,4 +991,60 @@ test('startup restores the active solar quarter during the first quarter of a Zu
   h.state.quarterSolar = true;
   await h.service.recalculate();
   close(h.forecast(0)!.quarterHourly![0].estimatedProductionKwh, .42);
+});
+
+test('restart restores saved future solar days when individual provider reads fail, preserving the battery horizon', async () => {
+  const first = fixture('2026-10-27T12:07:00Z'); await first.service.recalculate();
+  const restored: string[] = [];
+  const next = fixture('2026-10-27T13:00:00Z', undefined, undefined, undefined, undefined, undefined, async date => {
+    restored.push(date);
+    return first.forecast(forecastDayOffsets.find(offset => first.date(offset) === date)!);
+  });
+  for (const offset of [2, 3, 4]) next.state.failSolarOffsets.add(offset);
+  await next.service.recalculate();
+  assert.deepEqual(restored.sort(), ['2026-10-29', '2026-10-30', '2026-10-31']);
+  for (const offset of [2, 3, 4] as const) {
+    assert.equal(next.forecast(offset)!.status, 'stale');
+    assert.equal(next.forecast(offset)!.fetchedAt, first.forecast(offset)!.fetchedAt);
+    assert.deepEqual(next.forecast(offset)!.quarterHourly, first.forecast(offset)!.quarterHourly);
+  }
+  assert.equal(next.service.projection().status, 'available');
+  assert.equal(next.service.projection().reason, null);
+  assert.equal(next.service.projection().points.at(-1)!.at, getCalendarDayBounds(new Date(`${next.date(7)}T00:00:00Z`)).end.toISOString());
+});
+
+test('disabled automation still publishes passive battery forecasts without enabling the planner', async () => {
+  const h = fixture(); h.automation.enabled = false; h.automation.status = 'disabled';
+  await h.service.recalculate();
+  assert.equal(h.service.projection().status, 'available');
+  assert.equal(h.service.projection().assumption, 'passive_operation');
+  assert.equal(h.service.planner(), null);
+  assert.ok(h.records.at(-1)!.projection.points.length > 0);
+});
+
+test('a failed saved-solar read aborts the batch instead of publishing missing future days', async () => {
+  const h = fixture(undefined, undefined, undefined, undefined, undefined, undefined, async () => {
+    throw new Error('saved forecast unavailable');
+  });
+  h.state.failSolarOffsets.add(2);
+  await assert.rejects(h.service.recalculate(), /saved forecast unavailable/);
+  assert.equal(h.calls.publish, 0);
+  assert.equal(h.service.status().calculatedAt, null);
+});
+
+test('missing 29–31 October solar retries next quarter while 1 November stays intact and battery coverage recovers', async () => {
+  const h = fixture('2026-10-27T12:07:00Z');
+  for (const offset of [2, 3, 4]) h.state.failSolarOffsets.add(offset);
+  await h.service.recalculate();
+  for (const offset of [2, 3, 4] as const) assert.equal(h.forecast(offset)!.status, 'offline');
+  const later = h.forecast(5)!;
+  assert.equal(later.date, '2026-11-01'); assert.equal(later.status, 'online');
+  assert.equal(h.service.projection().reason, 'forecast_unavailable');
+  h.state.failSolarOffsets.clear(); h.setTime('2026-10-27T12:15:00Z');
+  await h.service.recalculate();
+  assert.deepEqual(h.calls.solar.slice(9).map(call => call.offset), [2, 3, 4]);
+  for (const offset of [2, 3, 4] as const) assert.equal(h.forecast(offset)!.status, 'online');
+  assert.deepEqual(h.forecast(5), later);
+  assert.equal(h.service.projection().status, 'available'); assert.equal(h.service.projection().reason, null);
+  assert.equal(h.service.projection().points.at(-1)!.at, '2026-11-03T23:00:00.000Z');
 });

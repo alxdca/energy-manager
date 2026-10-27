@@ -369,12 +369,15 @@ export async function createPostgresHistory(options: { connectionString: string;
       const [energy, observed, saved, householdPredictions] = await Promise.all([
         energyDay(date, now), batteryHistory.summary(date, now), savedEstimates(date), readHouseholdPredictionHistory(pool, date, now),
       ]);
+      const solar = saved.metadata?.forecasts.find(value => value.date === date)?.solar;
       return { date, timeZone, periodStart: start.toISOString(), periodEnd: end.toISOString(),
         dailyEnergy: energy.dailyEnergy, measurements: energy.measurements, battery: observed,
-        historicalEstimated: { status: 'ready', error: null, points: saved.battery },
+        historicalEstimated: { status: 'ready', error: null, points: saved.battery,
+          projection: saved.metadata?.projection ?? { status: 'unavailable', reason: 'awaiting_evaluation', assumption: 'automatic_planning' } },
         observations: { method: 'counter_differences' as const, solar: energy.solar, household: energy.household },
         solarEstimates: saved.solar, energyEstimates: saved.house,
-        householdPredictions };
+        householdPredictions, ...(solar ? { solarForecast: { status: solar.status, error: solar.error,
+          fetchedAt: solar.fetchedAt, weatherModel: solar.weatherModel } } : {}) };
     },
   };
   function close() {

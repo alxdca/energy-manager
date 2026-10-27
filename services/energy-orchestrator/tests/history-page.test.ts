@@ -10,7 +10,7 @@ test('history controls render one joined table, use quarter-hour records directl
     listeners = new Map<string, (event?: any) => void>();
     attributes = new Map<string, string>();
     dataset: Record<string, string> = {};
-    textContent = ''; className = ''; id = ''; value = ''; checked = false; hidden = false; disabled = false;
+    textContent = ''; className = ''; id = ''; value = ''; max = ''; checked = false; hidden = false; disabled = false;
     rowSpan = 1; colSpan = 1; scope = ''; title = ''; type = ''; name = ''; tabIndex = -1;
     constructor(public tagName: string) {}
     append(...children: Element[]) { this.children.push(...children.flatMap(child => child.tagName === 'fragment' ? child.children : [child])); }
@@ -21,8 +21,7 @@ test('history controls render one joined table, use quarter-hour records directl
     all(): Element[] { return [this, ...this.children.flatMap(child => child.all())]; }
     fire(name: string) { this.listeners.get(name)?.({ preventDefault() {} }); }
   }
-  // This fixture exercises the selected-day controller; weekly rows have their own rendering checks.
-  const elements = new Map(ids.filter(id => !id.startsWith('week-')).map(id => [id, new Element('div')]));
+  const elements = new Map(ids.map(id => [id, new Element('div')]));
   elements.set('local-date', new Element('span')); elements.set('local-time', new Element('span'));
   const get = (name: string) => elements.get(`history-${name}`)!;
   const windowEvents = new Map<string, (event?: any) => void>();
@@ -188,5 +187,23 @@ test('history controls render one joined table, use quarter-hour records directl
   windowEvents.get('household-forecast-updated')?.(); await settle();
   assert.equal(calls.length, beforeTrainingRefresh + 1, 'finished training invalidates cached predictions');
   assert.equal(body().children.length, 100, 'training refresh preserves the selected DST day and quarter view');
+
+  assert.equal(elements.has('week-heading'), false, 'there is no separate weekly forecast card');
+  const maximum = get('date').max;
+  assert.match(maximum, /^\d{4}-\d{2}-\d{2}$/);
+  get('date').value = maximum; get('date-form').fire('submit'); await settle();
+  assert.equal(get('next').disabled, true);
+  const atLimit = calls.length;
+  get('next').fire('click'); await settle();
+  assert.equal(calls.length, atLimit, 'the next-day arrow stops at the forecast limit');
+  get('date').value = '2099-01-01'; get('date-form').fire('submit'); await settle();
+  assert.equal(calls.length, atLimit, 'manually typed dates cannot bypass the limit');
+  assert.equal(get('date').value, maximum);
+  assert.match(get('error-text').textContent, /sept prochains jours/);
+  location.href = 'http://local.test/donnees?date=2099-01-01';
+  windowEvents.get('popstate')?.(); await settle();
+  assert.equal(new URL(location.href).searchParams.get('date'), maximum, 'out-of-range URLs are normalized');
+  get('previous').fire('click'); await settle();
+  assert.equal(get('next').disabled, false);
 
 });
