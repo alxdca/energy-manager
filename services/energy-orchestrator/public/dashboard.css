@@ -219,3 +219,11 @@ body[data-page=previsions] .forecast-panel{margin-top:0;max-width:760px}
 .learning-note{font-size:12px;line-height:1.7;color:var(--muted);margin:14px 0 0}
 .learning-link{color:var(--teal);font-size:12px;min-height:44px;display:inline-flex;align-items:center}
 .learning-link:hover{text-decoration:underline}
+
+.chart-car-measured{fill:none;stroke:#598bc4;stroke-width:2;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.chart-car-measured-point{fill:#598bc4}
+.chart-legend-car-measured:before{content:"";width:18px;border-top:2px solid #598bc4}
+
+.chart-car-estimated{fill:none;stroke:#598bc4;stroke-width:2;stroke-dasharray:5 3;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.chart-car-estimated-point{fill:#598bc4}
+.chart-legend-car-estimated:before{content:"";width:18px;border-top:2px dashed #598bc4}

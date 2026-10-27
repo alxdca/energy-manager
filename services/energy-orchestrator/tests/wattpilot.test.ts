@@ -9,7 +9,7 @@ function state(overrides: Partial<WattpilotTelemetry> = {}): WattpilotTelemetry 
     observedAt: at, powerObservedAt: at, error: null, controlEnabled: true, mode: 'eco',
     carConnected: true, charging: false, allowedCharging: false, currentAmps: 14, powerWatts: 0,
     phaseMode: 'auto', phaseSwitchingSupported: true,
-    sessionEnergyWh: 30, totalEnergyWh: 10_000, limits: { minCurrentAmps: 6, maxCurrentAmps: 16 }, deviceLeaseSupported: false, automation: null,
+    sessionEnergyWh: 30, totalEnergyWh: 10_000, energyCounterSource: 'Wattpilot:test', limits: { minCurrentAmps: 6, maxCurrentAmps: 16 }, deviceLeaseSupported: false, automation: null,
     ...overrides };
 }
 interface Call { path: string; method: string; body: unknown; signal: AbortSignal | null | undefined }

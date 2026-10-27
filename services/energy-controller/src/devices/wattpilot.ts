@@ -36,6 +36,7 @@ export interface WattpilotStatus {
   powerWatts: number | null;
   sessionEnergyWh: number | null;
   totalEnergyWh: number | null;
+  energyCounterSource?: string | null;
   limits: { minCurrentAmps: number; maxCurrentAmps: number | null };
   deviceLeaseSupported: false;
 }
@@ -167,6 +168,7 @@ export class Wattpilot {
       powerWatts: nonnegative(nrg[11]),
       sessionEnergyWh: nonnegative(props.wh),
       totalEnergyWh: nonnegative(props.eto),
+      energyCounterSource: this.serial ? `Wattpilot:${this.serial}` : null,
       limits: { minCurrentAmps: 6, maxCurrentAmps: this.maxCurrent() },
       deviceLeaseSupported: false,
     };

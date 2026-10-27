@@ -7,6 +7,7 @@ import { emptySolarForecast, type SolarForecast } from '../src/forecast.js';
 import { estimateConsumption } from '../src/consumption.js';
 import { getCalendarDayBounds } from '../src/policy.js';
 import type { ObservationSample } from '../src/observation-types.js';
+import type { CarChargingForecast } from '../src/car-types.js';
 import type { Telemetry } from '../src/status.js';
 import type { BatteryProjection } from '../src/battery-projection.js';
 import { createHouseholdService } from '../src/household-service.js';
@@ -26,7 +27,8 @@ const near = (actual: number | null, expected: number) => assert.ok(actual !== n
 function sample(seconds: number, solar = 1000, household = 5000, soc = 50, source = 'inverter-1', origin = at): ObservationSample {
   const time = advance(seconds, origin);
   return { battery: { at: time, value: soc }, solar: { at: time, value: solar, source },
-    household: { at: time, value: household, source: `${source}/meter-1` } };
+    household: { at: time, value: household, source: `${source}/meter-1` },
+    car: { at: time, value: 0, source: 'Wattpilot:1' } };
 }
 function telemetry(time: string, soc = 50): Telemetry {
   return { status: 'online', observedAt: time, error: null, solarKw: 2, householdKw: 1,
@@ -44,6 +46,11 @@ function solar(time = at): SolarForecast {
     quarterHourly: consumption.quarterHourly.map(point => ({ start: point.start, end: point.end,
       estimatedProductionKwh: point.start >= at && point.start < advance(3600) ? 3 : 0, temperatureC: 10 })),
   };
+}
+function charging(time = at, powerKw = 6): CarChargingForecast {
+  return { date, status: 'available', calculatedAt: time, socObservedAt: time,
+    slots: [{ start: advance(420), end: advance(1320), powerKw, energyKwh: powerKw / 4,
+      source: 'solar', required: true, batteryChargeAllowed: false }] };
 }
 async function database(t: TestContext) {
   assert.ok(databaseUrl);
@@ -82,6 +89,161 @@ function savedModel(id = '00000000-0000-4000-8000-000000000003', trainedAt = at)
 }
 
 test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, async t => {
+  await t.test('car forecast rows supply live and historical reads, survive restart, and freeze started quarters', async t => {
+    const f = await database(t); let now = new Date(at); let history = await f.open(() => now);
+    const forecast = { ...solar(), consumption: estimateConsumption(date, { baselinePowerW: 500 }), carCharging: charging() };
+    await history.publishForecasts({ calculatedAt: at, forecasts: [forecast], projection: projection() });
+    const day = await history.historyReader.day(date, now);
+    near(day.carEstimates![0].estimatedChargingKwh, .8); near(day.carEstimates![1].estimatedChargingKwh, .7);
+    assert.equal(day.carEstimates![2].estimatedChargingKwh, 0);
+    assert.deepEqual((await history.readForecast(date))!.forecast.carEstimates, day.carEstimates);
+    const api = createApi({ controllerUrl: null, now: () => now, forecastStore: history, historyReader: history.historyReader });
+    assert.deepEqual((await (await api.request('/api/forecast/today')).json()).carEstimates,
+      (await (await api.request(`/api/history/day?date=${date}`)).json()).carEstimates);
+    const metadata = (await f.admin.query("SELECT value FROM energy_history.metadata WHERE key='forecast_batch_v1'")).rows[0].value;
+    assert.doesNotMatch(JSON.stringify(metadata), /carCharging|estimatedChargingKwh|"slots"|"energyKwh"|"powerKw"/);
+    await f.admin.query('UPDATE energy_history.car_forecasts SET energy_kwh=.6 WHERE interval_start=$1', [advance(900)]);
+    near((await history.readForecast(date))!.forecast.carEstimates![1].estimatedChargingKwh, .6);
+    await history.close(); history = await f.open(() => now);
+    assert.equal((await history.historyReader.day(date, now)).carEstimates![1].estimatedChargingKwh, .6);
+    now = new Date(advance(900));
+    const next = { ...charging(now.toISOString()), slots: [{ ...charging().slots[0], start: advance(900), end: advance(2700), energyKwh: 3 }] };
+    await history.publishForecasts({ calculatedAt: now.toISOString(), forecasts: [{ ...forecast, carCharging: next }], projection: projection(now.toISOString()) });
+    const changed = (await history.historyReader.day(date, now)).carEstimates!;
+    assert.equal(changed[0].estimatedChargingKwh, .8); assert.equal(changed[1].estimatedChargingKwh, .6);
+    assert.equal(changed[2].estimatedChargingKwh, 1.5);
+    await assert.rejects(history.publishForecasts({ calculatedAt: at, forecasts: [forecast], projection: projection() }), /antérieur/);
+    assert.deepEqual((await history.historyReader.day(date, now)).carEstimates, changed);
+    now = new Date(advance(1800));
+    await history.publishForecasts({ calculatedAt: now.toISOString(), forecasts: [{ ...forecast,
+      carCharging: { ...next, status: 'unavailable', slots: [] } }], projection: projection(now.toISOString()) });
+    assert.deepEqual((await history.historyReader.day(date, now)).carEstimates, changed.slice(0, 3));
+  });
+
+  await t.test('car forecast publication rolls back all numerical channels and metadata together', async t => {
+    const f = await database(t); const history = await f.open();
+    const forecast = { ...solar(), consumption: estimateConsumption(date, { baselinePowerW: 500 }), carCharging: charging() };
+    await history.publishForecasts({ calculatedAt: at, forecasts: [forecast], projection: projection() });
+    const before = await history.historyReader.day(date), saved = await history.readForecast(date);
+    await f.admin.query(`CREATE FUNCTION energy_history.reject_car_forecast() RETURNS trigger LANGUAGE plpgsql AS
+      'BEGIN RAISE EXCEPTION ''test failure''; END';
+      CREATE TRIGGER reject_car_forecast BEFORE INSERT ON energy_history.car_forecasts
+      FOR EACH ROW EXECUTE FUNCTION energy_history.reject_car_forecast()`);
+    const later = advance(60);
+    const batch = { calculatedAt: later, forecasts: [{ ...forecast, carCharging: charging(later, 12) }], projection: projection(later) };
+    await assert.rejects(history.publishForecasts(batch));
+    assert.deepEqual(await history.historyReader.day(date), before); assert.deepEqual(await history.readForecast(date), saved);
+    await f.admin.query('DROP TRIGGER reject_car_forecast ON energy_history.car_forecasts');
+    await history.publishForecasts(batch);
+    const rows = (await history.historyReader.day(date)).carEstimates!;
+    assert.equal(rows[0].estimatedChargingKwh, .8); assert.equal(rows[1].estimatedChargingKwh, 1.4);
+  });
+
+  await t.test('v10 migration moves the last known allocation to canonical rows and removes the saved plan', async t => {
+    const f = await database(t); const initial = await f.open();
+    await initial.publishForecasts({ calculatedAt: at,
+      forecasts: [{ ...solar(), consumption: estimateConsumption(date, { baselinePowerW: 500 }) }], projection: projection() });
+    await initial.close();
+    const legacy = (await f.admin.query("SELECT value FROM energy_history.metadata WHERE key='forecast_batch_v1'")).rows[0].value;
+    legacy.forecasts[0].carCharging = charging();
+    await f.admin.query("UPDATE energy_history.metadata SET value=$1::jsonb WHERE key='forecast_batch_v1'", [JSON.stringify(legacy)]);
+    await f.admin.query("DROP TABLE energy_history.car_forecasts; UPDATE energy_history.metadata SET value='10'::jsonb WHERE key='schema_version'");
+    const upgraded = await f.open(() => new Date(advance(172800)));
+    const rows = (await upgraded.historyReader.day(date)).carEstimates!;
+    assert.equal(rows[0].start, at); near(rows[0].estimatedChargingKwh, .8); near(rows[1].estimatedChargingKwh, .7);
+    const metadata = (await f.admin.query("SELECT value FROM energy_history.metadata WHERE key='forecast_batch_v1'")).rows[0].value;
+    delete legacy.forecasts[0].carCharging; assert.deepEqual(metadata, legacy);
+    const columns = await f.admin.query("SELECT column_name FROM information_schema.columns WHERE table_schema='energy_history' AND table_name='car_forecasts' ORDER BY ordinal_position");
+    assert.deepEqual(columns.rows.map(row => row.column_name), ['interval_start', 'energy_kwh']);
+    for (const value of [-1, Infinity, NaN]) await assert.rejects(f.admin.query('INSERT INTO energy_history.car_forecasts VALUES ($1,$2)', [advance(-900), value]), { code: '23514' });
+    await assert.rejects(f.admin.query('INSERT INTO energy_history.car_forecasts VALUES ($1,0)', [advance(1)]), { code: '23514' });
+    await upgraded.close(); const restarted = await f.open();
+    assert.deepEqual((await restarted.historyReader.day(date)).carEstimates, rows);
+  });
+
+  await t.test('a failed car forecast migration preserves the legacy plan and schema version for retry', async t => {
+    const f = await database(t); const initial = await f.open();
+    await initial.publishForecasts({ calculatedAt: at,
+      forecasts: [{ ...solar(), consumption: estimateConsumption(date, { baselinePowerW: 500 }) }], projection: projection() });
+    await initial.close();
+    const legacy = (await f.admin.query("SELECT value FROM energy_history.metadata WHERE key='forecast_batch_v1'")).rows[0].value;
+    legacy.forecasts[0].carCharging = charging();
+    await f.admin.query("UPDATE energy_history.metadata SET value=$1::jsonb WHERE key='forecast_batch_v1'", [JSON.stringify(legacy)]);
+    await f.admin.query(`UPDATE energy_history.metadata SET value='10'::jsonb WHERE key='schema_version';
+      CREATE FUNCTION energy_history.reject_car_migration() RETURNS trigger LANGUAGE plpgsql AS
+      'BEGIN RAISE EXCEPTION ''test failure''; END';
+      CREATE TRIGGER reject_car_migration BEFORE INSERT ON energy_history.car_forecasts
+      FOR EACH ROW EXECUTE FUNCTION energy_history.reject_car_migration()`);
+    await assert.rejects(f.open(), /Initialisation/);
+    assert.equal((await f.admin.query("SELECT value FROM energy_history.metadata WHERE key='schema_version'")).rows[0].value, 10);
+    assert.deepEqual((await f.admin.query("SELECT value FROM energy_history.metadata WHERE key='forecast_batch_v1'")).rows[0].value, legacy);
+    assert.equal(await f.count('car_forecasts'), 0);
+    await f.admin.query('DROP TRIGGER reject_car_migration ON energy_history.car_forecasts');
+    const upgraded = await f.open();
+    assert.equal((await upgraded.historyReader.day(date)).carEstimates![0].estimatedChargingKwh, .8);
+  });
+
+  await t.test('car and house-only deltas persist atomically and learning never reads inclusive history', async t => {
+    const f = await database(t); let now = new Date(at); let history = await f.open(() => now);
+    await f.admin.query('INSERT INTO energy_history.house_observations VALUES ($1, 9000)', [advance(-86430)]);
+    const old = await history.historyReader.day('2026-01-14', now);
+    assert.equal(old.dailyEnergy.householdIncludesCar, true); near(old.dailyEnergy.household.energyKwh, 9);
+    const first = sample(870, 1000, 10000); first.car!.value = 5000;
+    const next = sample(1770, 1250, 13000); next.car!.value = 7000;
+    now = new Date(advance(870)); history.record(first, now);
+    now = new Date(advance(900)); await history.flush();
+    now = new Date(advance(1770)); history.record(next, now);
+    now = new Date(advance(1800));
+    await f.admin.query(`CREATE FUNCTION energy_history.reject_car() RETURNS trigger LANGUAGE plpgsql AS
+      'BEGIN RAISE EXCEPTION ''test failure''; END';
+      CREATE TRIGGER reject_car BEFORE INSERT ON energy_history.car_observations
+      FOR EACH ROW EXECUTE FUNCTION energy_history.reject_car()`);
+    await assert.rejects(history.flush());
+    for (const table of ['car_observations', 'house_only_observations']) assert.equal(await f.count(table), 0);
+    assert.equal(await f.count('house_observations'), 1, 'failed transaction retains only the preexisting legacy row');
+    await f.admin.query('DROP TRIGGER reject_car ON energy_history.car_observations');
+    await history.flush();
+    const day = await history.historyReader.day(date, now);
+    assert.equal(day.dailyEnergy.householdIncludesCar, false);
+    near(day.dailyEnergy.household.energyKwh, 1); near(day.dailyEnergy.car!.energyKwh, 2);
+    near(day.dailyEnergy.totalHousehold!.energyKwh, 3);
+    assert.deepEqual(await history.householdArchive.readObservations(new Date(advance(-90000)), now, now),
+      [{ at: advance(1770), value: 1000 }]);
+    await history.close(); history = await f.open(() => now);
+    assert.deepEqual(await history.historyReader.day(date, now), day);
+    now = new Date(advance(2670)); history.record({ ...sample(2670, 1400, 14000), car: null }, now);
+    now = new Date(advance(2700)); await history.flush();
+    const partial = await history.dailyEnergyStore.summary(date, now);
+    near(partial.household.energyKwh, 1); near(partial.totalHousehold!.energyKwh, 4);
+    assert.equal(partial.separationIncomplete, true);
+  });
+
+  await t.test('v9 upgrade preserves old readings and forecasts and rejects inclusive models', async t => {
+    const f = await database(t); const initial = await f.open(); await initial.close();
+    await f.admin.query(`DROP TABLE energy_history.car_observations, energy_history.house_only_observations;
+      ALTER TABLE energy_history.house_forecasts DROP COLUMN excludes_car;
+      DELETE FROM energy_history.metadata WHERE key = 'car_separation_started_at';
+      UPDATE energy_history.metadata SET value = '9'::jsonb WHERE key = 'schema_version'`);
+    await f.admin.query('INSERT INTO energy_history.house_observations VALUES ($1,9000)', [advance(-86430)]);
+    await f.admin.query('INSERT INTO energy_history.house_forecasts VALUES ($1,3)', [at]);
+    await f.admin.query("INSERT INTO energy_history.metadata VALUES ('household_model_v1',$1::jsonb)",
+      [JSON.stringify({ ...savedModel(), version: 'household-profile-v2', scope: 'household_total' })]);
+    const upgraded = await f.open();
+    assert.equal(await upgraded.householdArchive.readModel(), null);
+    assert.deepEqual(await upgraded.householdArchive.readObservations(new Date(advance(-90000)), new Date(at), new Date(at)), []);
+    near((await upgraded.dailyEnergyStore.summary('2026-01-14')).household.energyKwh, 9);
+    const forecast = (await upgraded.historyReader.day(date)).householdPredictions![0];
+    assert.equal(forecast.estimatedConsumptionKwh, 3); assert.equal(forecast.excludesCar, false);
+    const service = createHouseholdService({ archive: upgraded.householdArchive, now: () => new Date(at),
+      weather: { async read() { return undefined; } } });
+    await service.train();
+    const rebuilt = await upgraded.householdArchive.readForecast(date);
+    assert.equal(rebuilt!.slots.find(slot => slot.start === at)!.estimatedConsumptionKwh, null,
+      'a frozen inclusive forecast must not acquire a car-free label');
+    assert.equal(rebuilt!.slots.find(slot => slot.start === advance(900))!.estimatedConsumptionKwh, .25);
+    assert.equal((await upgraded.historyReader.day(date)).householdPredictions![0].estimatedConsumptionKwh, 3);
+  });
+
   await t.test('fresh observation tables have exactly a real timestamp and value, with valid fixed units', async t => {
     const f = await database(t); await f.open();
     for (const table of ['battery_observations', 'solar_observations', 'house_observations']) {
@@ -92,7 +254,7 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
       for (const value of [-1, Infinity, NaN]) await assert.rejects(f.admin.query(`INSERT INTO energy_history.${table} VALUES ($1, $2)`, [advance(30), value]), { code: '23514' });
     }
     await assert.rejects(f.admin.query('INSERT INTO energy_history.battery_observations VALUES ($1,101)', [advance(31)]), { code: '23514' });
-    assert.equal((await f.admin.query("SELECT value FROM energy_history.metadata WHERE key = 'schema_version'")).rows[0].value, 9);
+    assert.equal((await f.admin.query("SELECT value FROM energy_history.metadata WHERE key = 'schema_version'")).rows[0].value, 11);
     assert.equal((await f.admin.query("SELECT to_regclass('energy_history.energy_days') AS name")).rows[0].name, null);
     assert.equal((await f.admin.query("SELECT to_regclass('energy_history.telemetry_samples') AS name")).rows[0].name, null);
   });
@@ -225,14 +387,14 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
       'battery_forecasts', 'house_forecasts', 'solar_forecasts']) assert.equal(await f.count(table), 0);
     const tables = await f.admin.query(`SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'energy_history' ORDER BY table_name`);
-    assert.deepEqual(tables.rows.map(row => row.table_name), ['battery_forecasts', 'battery_observations',
-      'house_forecasts', 'house_observations', 'household_weather',
+    assert.deepEqual(tables.rows.map(row => row.table_name), ['battery_forecasts', 'battery_observations', 'car_forecasts', 'car_observations',
+      'house_forecasts', 'house_observations', 'house_only_observations', 'household_weather',
       'metadata', 'solar_forecasts', 'solar_observations']);
     assert.deepEqual(await history.dailyEnergyStore.days(), []);
     const day = await history.historyReader.day(date);
     assert.equal(day.dailyEnergy.status, 'unavailable');
     assert.deepEqual(day.battery.points, []);
-    assert.deepEqual(day.observations, { method: 'counter_differences', solar: [], household: [] });
+    assert.deepEqual(day.observations, { method: 'counter_differences', solar: [], household: [], car: [], totalHousehold: [] });
     assert.deepEqual(day.historicalEstimated.points, []);
     assert.deepEqual(day.energyEstimates, []);
     assert.deepEqual(day.solarEstimates, []);
@@ -246,10 +408,11 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
       UPDATE energy_history.metadata SET value = '6'::jsonb WHERE key = 'schema_version'`);
     await f.admin.query('INSERT INTO energy_history.house_observations VALUES ($1, 250)', [advance(-30)]);
     const upgraded = await f.open();
-    assert.equal((await f.admin.query("SELECT value FROM energy_history.metadata WHERE key = 'schema_version'")).rows[0].value, 9);
+    assert.equal((await f.admin.query("SELECT value FROM energy_history.metadata WHERE key = 'schema_version'")).rows[0].value, 11);
     assert.equal((await f.admin.query("SELECT to_regclass('energy_history.house_intervals') AS name")).rows[0].name, null);
     const observations = await upgraded.householdArchive.readObservations(new Date(advance(-900)), new Date(at), new Date(at));
-    assert.deepEqual(observations, [{ at: advance(-30), value: 250 }]);
+    assert.deepEqual(observations, []);
+    assert.equal(await f.count('house_observations'), 1);
   });
 
   await t.test('training reads finalized fixed quarters directly from unmodified observations', async t => {
@@ -279,13 +442,13 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
   await t.test('household training and canonical estimates survive restart separately from battery control', async t => {
     const f = await database(t); let now = new Date(at); let history = await f.open(() => now);
     const observations = householdDaySlots('2026-01-14').map(slot => ({ at: new Date(Date.parse(slot.end) - 30000).toISOString(), value: 250 }));
-    await f.admin.query(`INSERT INTO energy_history.house_observations (observed_at,value)
+    await f.admin.query(`INSERT INTO energy_history.house_only_observations (observed_at,value)
       SELECT x.at::timestamptz,x.value FROM jsonb_to_recordset($1::jsonb) x(at text,value double precision)`, [JSON.stringify(observations)]);
     const service = createHouseholdService({ archive: history.householdArchive, now: () => now, weather: { async read() { return undefined; } },
       finalizeMeasurements: history.flush });
     await service.train();
     const original = await history.householdArchive.readForecast('2026-01-16');
-    assert.ok(original); assert.equal(original.estimatedConsumptionKwh, 24); assert.equal(original.scope, 'household_total');
+    assert.ok(original); assert.equal(original.estimatedConsumptionKwh, 24); assert.equal(original.scope, 'household_excluding_car');
     assert.ok(await f.count('house_forecasts') > 0);
     assert.equal((await f.admin.query("SELECT to_regclass('energy_history.household_forecasts') AS name")).rows[0].name, null);
     const day = await history.historyReader.day('2026-01-16', now);
@@ -321,7 +484,7 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
     const baseline = await history.householdArchive.readForecast('2026-01-16');
     assert.equal(baseline!.source, 'configured_baseline'); near(baseline!.estimatedConsumptionKwh, 30);
     assert.equal((await history.historyReader.day('2026-01-16', now)).householdPredictions![0].source, 'configured_baseline');
-    for (let i = 0; i < 4; i++) await f.admin.query('INSERT INTO energy_history.house_observations VALUES ($1,500)', [advance(-30 - i * 900)]);
+    for (let i = 0; i < 4; i++) await f.admin.query('INSERT INTO energy_history.house_only_observations VALUES ($1,500)', [advance(-30 - i * 900)]);
     now = new Date(advance(60)); await service.train();
     const average = await history.householdArchive.readForecast('2026-01-16');
     assert.equal(average!.source, 'mixed');
@@ -376,7 +539,7 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
     assert.equal(learned.estimatedConsumptionKwh, null, 'missing past quarters are never backfilled');
     const columns = await f.admin.query(`SELECT column_name FROM information_schema.columns
       WHERE table_schema='energy_history' AND table_name='house_forecasts' ORDER BY ordinal_position`);
-    assert.deepEqual(columns.rows.map(row => row.column_name), ['interval_start', 'energy_kwh']);
+    assert.deepEqual(columns.rows.map(row => row.column_name), ['interval_start', 'energy_kwh', 'excludes_car']);
   });
 
   await t.test('household publication rolls back estimates and context together', async t => {
@@ -429,7 +592,7 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
     assert.deepEqual(await upgraded.householdArchive.readModel(), selected);
     assert.equal((await f.admin.query("SELECT to_regclass('energy_history.household_training') AS name")).rows[0].name, null);
     assert.deepEqual((await f.admin.query('SELECT * FROM energy_history.household_forecasts')).rows, [{ model_id: selected.id }]);
-    assert.equal((await f.admin.query("SELECT value FROM energy_history.metadata WHERE key='schema_version'")).rows[0].value, 9);
+    assert.equal((await f.admin.query("SELECT value FROM energy_history.metadata WHERE key='schema_version'")).rows[0].value, 11);
     await upgraded.close(); const restarted = await f.open();
     const service = createHouseholdService({ archive: restarted.householdArchive, now: () => new Date(at), weather: { async read() { return undefined; } } });
     await service.refresh();
@@ -491,7 +654,7 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
     if (version === 6) await f.admin.query('DROP TABLE energy_history.household_weather');
     await f.admin.query("UPDATE energy_history.metadata SET value=$1::jsonb WHERE key='schema_version'", [JSON.stringify(version)]);
     const upgraded = await f.open();
-    assert.equal((await f.admin.query("SELECT value FROM energy_history.metadata WHERE key='schema_version'")).rows[0].value, 9);
+    assert.equal((await f.admin.query("SELECT value FROM energy_history.metadata WHERE key='schema_version'")).rows[0].value, 11);
     for (const channel of ['battery', 'house', 'solar']) {
       assert.equal((await f.admin.query('SELECT to_regclass($1) AS name', [`energy_history.${channel}_estimates`])).rows[0].name, null);
       assert.deepEqual((await f.admin.query(`SELECT tableoid::oid AS table_id, * FROM energy_history.${channel}_forecasts`)).rows, snapshots.get(channel));
@@ -514,7 +677,7 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
     assert.equal((await f.admin.query("SELECT to_regclass('energy_history.battery_forecasts') AS name")).rows[0].name, null);
   });
 
-  for (const version of [1, 2, 3, 4, 5, 10, '6', null]) await t.test(`unsupported schema ${JSON.stringify(version)} fails without changing stored data`, async t => {
+  for (const version of [1, 2, 3, 4, 5, 12, '6', null]) await t.test(`unsupported schema ${JSON.stringify(version)} fails without changing stored data`, async t => {
     const f = await database(t); const history = await f.open(); await history.close();
     await f.admin.query('INSERT INTO energy_history.battery_observations VALUES ($1,50)', [advance(5)]);
     await f.admin.query("UPDATE energy_history.metadata SET value=$1::jsonb WHERE key='schema_version'", [JSON.stringify(version)]);

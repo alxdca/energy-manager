@@ -25,7 +25,6 @@ export async function requestHistoryJson(url, signal) {
 }
 
 const chartNumber = new Intl.NumberFormat('fr-CH', { maximumFractionDigits: 0 });
-const chartTime = new Intl.DateTimeFormat('fr-CH', { timeZone: 'Europe/Zurich', hourCycle: 'h23', hour: '2-digit', minute: '2-digit' });
 
 export function batteryForecastMessage(day) {
   if (!day || day.date < todayInZurich()) return '';
@@ -65,6 +64,7 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
   const rows = model.rows;
   const numeric = value => typeof value === 'number' && Number.isFinite(value);
   const maximum = Math.max(0, ...rows.flatMap(row => [row.values.houseEstimated, row.values.houseMeasured]).filter(numeric),
+    ...rows.flatMap(row => [row.values.carMeasured, row.values.carEstimated]).filter(numeric),
     ...rows.flatMap(row => [row.values.solarEstimated, row.values.solarMeasured]).filter(numeric));
   const step = maximum <= 2 ? .5 : maximum <= 5 ? 1 : 10 ** Math.floor(Math.log10(maximum));
   const ceiling = Math.max(step, Math.ceil(maximum / step) * step);
@@ -82,7 +82,7 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
   const tooltip = (element, label) => add('title', {}, label, element);
   add('title', {}, 'Données énergétiques de la journée');
   const chartPeriod = chartView === 'quarter' ? 'par tranches de 15 minutes' : 'par heure';
-  add('desc', {}, `Solaire ${chartPeriod}, prévu en barres larges et relevé en barres superposées. Maison ${chartPeriod}, prévue en ligne pointillée et relevée en ligne continue. Énergie en Wh sur l’axe gauche. Batterie ${chartPeriod}, relevée en violet continu et prévue en pointillé sur l’axe droit ; dernier niveau de chaque période, sans moyenne. ${rows.length} ${chartView === 'quarter' ? 'tranches de 15 minutes' : 'heures'}, fuseau Europe/Zurich.`);
+  add('desc', {}, `Solaire ${chartPeriod}, prévu en barres larges et relevé en barres superposées. Maison ${chartPeriod}, prévue en ligne pointillée et relevée en ligne continue. Énergie en Wh sur l’axe gauche. Batterie ${chartPeriod}, relevée en violet continu et prévue en pointillé sur l’axe droit ; dernier niveau de chaque période, sans moyenne. Chaque heure indique la fin de la période et aligne l’énergie avec le niveau de batterie. ${rows.length} ${chartView === 'quarter' ? 'tranches de 15 minutes' : 'heures'}, fuseau Europe/Zurich.`);
   add('text', { x: left, y: 13, class: 'chart-axis' }, 'Wh');
   for (const value of [0, ceiling / 2, ceiling]) {
     add('line', { x1: left, x2: right, y1: y(value), y2: y(value), class: 'chart-grid' });
@@ -119,17 +119,17 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
       if (!numeric(value)) { finish(); return; }
       segment.push(`${x(index)},${y(value)}`);
       const point = add('circle', { cx: x(index), cy: y(value), r: 3, class: `${className}-point` });
-      tooltip(point, `${row.label} · ${label} : ${chartNumber.format(value * 1000)} Wh${key === 'houseEstimated' && row.notes?.houseEstimated ? `\n${row.notes.houseEstimated}` : ''}`);
+      tooltip(point, `${row.label} · ${label} : ${chartNumber.format(value * 1000)} Wh${['houseEstimated', 'carEstimated'].includes(key) && row.notes?.[key] ? `\n${row.notes[key]}` : ''}`);
     });
     finish();
   };
   line('houseEstimated', 'chart-demand', 'Maison prévue');
   line('houseMeasured', 'chart-demand-measured', 'Maison relevée');
+  line('carMeasured', 'chart-car-measured', 'Recharge voiture');
+  line('carEstimated', 'chart-car-estimated', 'Recharge voiture prévue');
   const ySoc = value => bottom - value / 100 * (bottom - top);
   add('text', { x: right + 8, y: 13, class: 'chart-axis chart-battery-axis chart-battery-unit' }, '% SOC');
   for (const value of [0, 50, 100]) add('text', { x: right + 8, y: ySoc(value) + 4, class: 'chart-axis chart-battery-axis' }, String(value));
-  const start = Date.parse(day.periodStart), end = Date.parse(day.periodEnd);
-  const xSoc = at => left + (Date.parse(at) - start) / (end - start) * (right - left);
   for (const [key, className, label] of [
     ['batteryMeasured', 'chart-battery-measured', 'Batterie relevée'],
     ['batteryEstimated', 'chart-battery-estimated', 'Batterie prévue'],
@@ -139,13 +139,13 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
       if (segment.length > 1) add('polyline', { points: segment.join(' '), class: className });
       segment = [];
     };
-    for (const row of rows) {
+    rows.forEach((row, index) => {
       const value = row.values[key];
-      if (!numeric(value)) { finish(); continue; }
-      segment.push(`${xSoc(row.end)},${ySoc(value)}`);
-      const point = add('circle', { cx: xSoc(row.end), cy: ySoc(value), r: 3, class: `${className}-point` });
-      tooltip(point, `${chartTime.format(new Date(row.end))} · ${label} : ${chartNumber.format(value)} %`);
-    }
+      if (!numeric(value)) { finish(); return; }
+      segment.push(`${x(index)},${ySoc(value)}`);
+      const point = add('circle', { cx: x(index), cy: ySoc(value), r: 3, class: `${className}-point` });
+      tooltip(point, `${row.label} · ${label} : ${chartNumber.format(value)} %\n${row.notes[key]}`);
+    });
     finish();
   }
 }
@@ -196,7 +196,8 @@ function initializeHistory() {
     if (!state.day) return;
     const date = formatHistoryValue(state.date, { type: 'date' });
     const count = (Date.parse(state.day.periodEnd) - Date.parse(state.day.periodStart)) / (state.view === 'hour' ? 3600000 : 900000);
-    elements['day-summary'].textContent = `${date} · ${state.view === 'hour' ? `${count} heures` : `${count} pas de 15 min`}`;
+    const scope = state.day.dailyEnergy?.householdIncludesCar === false ? 'Maison hors recharge voiture' : 'Recharge voiture incluse';
+    elements['day-summary'].textContent = `${date} · ${state.view === 'hour' ? `${count} heures` : `${count} pas de 15 min`} · ${scope}${state.day.dailyEnergy?.separationIncomplete ? ' · séparation partielle' : ''}`;
   }
   function updateSelection() {
     elements['selection-count'].textContent = `${selection.size} valeur${selection.size > 1 ? 's' : ''}`;
@@ -235,7 +236,7 @@ function initializeHistory() {
       const table = make('table', 'history-values');
       table.append(make('caption', 'sr-only', `Historique du ${formatHistoryValue(state.date, { type: 'date' })} · ${viewLabel()}`));
       const head = make('thead'), groups = make('tr'), values = make('tr');
-      const time = make('th', 'history-time-heading', 'Heure'); time.rowSpan = 2; time.scope = 'col'; groups.append(time);
+      const time = make('th', 'history-time-heading', 'Période'); time.rowSpan = 2; time.scope = 'col'; groups.append(time);
       for (const group of model.groups) {
         const cell = make('th', '', group.label); cell.colSpan = group.columns.length; cell.scope = 'colgroup'; cell.dataset.group = group.id; groups.append(cell);
       }
@@ -247,8 +248,8 @@ function initializeHistory() {
       const pages = Math.max(1, Math.ceil(model.rows.length / pageSize)); state.page = Math.min(state.page, pages - 1);
       const body = make('tbody');
       for (const row of model.rows.slice(state.page * pageSize, (state.page + 1) * pageSize)) {
-        const tr = make('tr'), time = make('td', 'history-time', row.label);
-        time.title = formatHistoryValue(row.start, { type: 'timestamp' }); tr.append(time);
+        const tr = make('tr'), time = make('td', 'history-time', row.rangeLabel);
+        time.title = `${formatHistoryValue(row.start, { type: 'timestamp' })} → ${formatHistoryValue(row.end, { type: 'timestamp' })}`; tr.append(time);
         for (const field of model.columns) {
           const value = row.values[field.key], cell = make('td', '', formatHistoryValue(value, field));
           const raw = value === null || value === undefined ? 'Valeur indisponible'

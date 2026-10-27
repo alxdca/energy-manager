@@ -132,7 +132,7 @@
     if (panel) panel.dataset.state = state;
     write('forecast-energy', available ? `≈ ${decimal.format(productionTotal)}` : '—');
     const hasConsumption = validDate(data.date) && consumption && typeof consumption === 'object'
-      && consumption.date === data.date && (learned ? ['measured_history', 'recent_average', 'configured_baseline', 'mixed'].includes(consumption.source) && consumption.scope === 'household_total'
+      && consumption.date === data.date && (learned ? ['measured_history', 'recent_average', 'configured_baseline', 'mixed'].includes(consumption.source) && consumption.scope === 'household_excluding_car' && consumption.excludesCar === true
         : consumption.source === 'configured_baseline' && consumption.excludesCar === true)
       && numeric(consumptionTotal) && consumptionTotal >= 0;
     write('forecast-consumption', hasConsumption ? `≈ ${integer.format(consumptionTotal)}` : '—');

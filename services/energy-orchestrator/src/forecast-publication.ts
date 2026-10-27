@@ -1,6 +1,6 @@
 import type { EnergyForecast } from './automation-plan.js';
 import type { BatteryProjection } from './battery-projection.js';
-import type { CarChargingForecast } from './car-types.js';
+import type { CarEstimatePoint } from './car-forecast-history.js';
 import type { ConsumptionForecast } from './consumption.js';
 import type { SolarForecast } from './forecast.js';
 
@@ -15,7 +15,7 @@ export interface PublishedForecast {
   calculatedAt: string;
   forecast: SolarForecast & {
     consumption: ConsumptionForecast | null;
-    carCharging?: CarChargingForecast;
+    carEstimates?: CarEstimatePoint[];
     forecastPeriod: { start: string; end: string; from: string };
   };
   projection: BatteryProjection;

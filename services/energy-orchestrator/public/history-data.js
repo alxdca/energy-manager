@@ -11,6 +11,7 @@ const instant = value => typeof value === 'string' ? Date.parse(value) : NaN;
 export const historyGroups = [
   { id: 'solar', label: 'Solaire', columns: [{ key: 'solarEstimated', label: 'Prévu', unit: 'Wh' }, { key: 'solarMeasured', label: 'Mesuré', unit: 'Wh' }] },
   { id: 'house', label: 'Maison', columns: [{ key: 'houseEstimated', label: 'Prévu', unit: 'Wh' }, { key: 'houseMeasured', label: 'Mesuré', unit: 'Wh' }] },
+  { id: 'car', label: 'Voiture', columns: [{ key: 'carEstimated', label: 'Prévu', unit: 'Wh' }, { key: 'carMeasured', label: 'Mesuré', unit: 'Wh' }] },
   { id: 'battery', label: 'Batterie', columns: [{ key: 'batteryEstimated', label: 'Prévu', unit: '%' }, { key: 'batteryMeasured', label: 'Mesuré', unit: '%' }] },
 ];
 export const allHistorySelection = historyGroups.flatMap(group => group.columns.map(column => column.key));
@@ -62,7 +63,9 @@ function householdSourceNote(day, start, end) {
   const points = (day?.householdPredictions ?? []).filter(p => instant(p.start) >= start && instant(p.end) <= end && finiteEnergy(p.estimatedConsumptionKwh));
   const average = points.filter(p => p.source === 'recent_average').length;
   const baseline = points.filter(p => p.source === 'configured_baseline').length;
-  return [average ? `Secours : moyenne récente (${average} tranches).` : '', baseline ? `Secours : base configurée (${baseline} tranches).` : ''].filter(Boolean).join(' ');
+  const scope = points.some(p => p.excludesCar === false) ? 'Ancienne prévision : recharge voiture non séparée.'
+    : points.some(p => p.excludesCar === true) ? 'Maison prévue hors recharge voiture.' : '';
+  return [average ? `Secours : moyenne récente (${average} tranches).` : '', baseline ? `Secours : base configurée (${baseline} tranches).` : '', scope].filter(Boolean).join(' ');
 }
 function batteryObservations(day) {
   return (Array.isArray(day?.battery?.points) ? day.battery.points : [])
@@ -107,8 +110,10 @@ function dayTable(day, selection, aggregation = 'quarter') {
   const start = instant(day?.periodStart), end = instant(day?.periodEnd);
   if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end || start % quarterMs !== 0 || end % quarterMs !== 0) return { groups, columns, rows: [], hasData: false };
   const recordedSolar = recordedObservations(day, 'solar'), recordedHouse = recordedObservations(day, 'household');
+  const recordedCar = recordedObservations(day, 'car');
   const consumption = estimatedIntervals(day?.householdPredictions ?? day?.energyEstimates, 'estimatedConsumptionKwh');
   const production = estimatedIntervals(day?.solarEstimates, 'estimatedProductionKwh');
+  const charging = estimatedIntervals(day?.carEstimates, 'estimatedChargingKwh');
   const observations = batteryObservations(day), predictions = batteryPredictions(day);
   const rows = [];
   let observedIndex = 0;
@@ -116,7 +121,9 @@ function dayTable(day, selection, aggregation = 'quarter') {
   for (let from = start; from < end; from += stepMs) {
     const to = Math.min(from + stepMs, end);
     const house = measuredEnergy(from, to, recordedHouse), pv = measuredEnergy(from, to, recordedSolar);
+    const car = measuredEnergy(from, to, recordedCar);
     const houseEstimate = estimatedEnergy(consumption, from, to), solarEstimate = estimatedEnergy(production, from, to);
+    const carEstimate = estimatedEnergy(charging, from, to);
     let observed = null;
     while (observedIndex < observations.length && observations[observedIndex].at < to) {
       if (observations[observedIndex].at >= from) observed = observations[observedIndex];
@@ -127,11 +134,13 @@ function dayTable(day, selection, aggregation = 'quarter') {
       const value = predictions.get(at);
       if (validSoc(value)) { predicted = value; predictedAt = at; }
     }
-    const values = { houseMeasured: house.value, houseEstimated: houseEstimate.value,
+    const values = { houseMeasured: house.value, houseEstimated: houseEstimate.value, carMeasured: car.value, carEstimated: carEstimate.value,
       batteryMeasured: observed?.value ?? null, batteryEstimated: predicted ?? null,
       solarMeasured: pv.value, solarEstimated: solarEstimate.value };
     const notes = {
-      houseMeasured: measuredNote(house),
+      houseMeasured: `${measuredNote(house)} ${day?.dailyEnergy?.householdIncludesCar === false ? 'Maison hors recharge voiture.' : 'Recharge voiture incluse.'}`,
+      carMeasured: measuredNote(car),
+      carEstimated: `${estimatedNote(carEstimate)} Recharge automatique programmée ; le mode manuel et le mode éco sans allocation restent inconnus.`,
       solarMeasured: measuredNote(pv),
       houseEstimated: [aggregation !== 'quarter' ? estimatedNote(houseEstimate) : values.houseEstimated === null ? 'Aucune estimation enregistrée pour cette tranche.' : 'Estimation enregistrée pour cette tranche de 15 min.', householdSourceNote(day, from, to)].filter(Boolean).join(' '),
       solarEstimated: aggregation !== 'quarter' ? estimatedNote(solarEstimate) : values.solarEstimated === null ? 'Aucune estimation solaire enregistrée pour cette tranche.' : 'Prévision solaire enregistrée pour cette tranche de 15 min.',
@@ -139,13 +148,18 @@ function dayTable(day, selection, aggregation = 'quarter') {
       batteryEstimated: predicted !== null && predicted !== undefined ? aggregation === 'quarter' ? `Prévision pour la fin de la tranche à ${timeText(to)}.` : `Dernière prévision enregistrée pour une cible de cette période, à ${timeText(predictedAt)}. Le niveau de charge n’est pas moyenné ; les cibles manquantes ne sont pas interpolées.`
         : aggregation === 'quarter' ? 'Aucune prévision enregistrée à la fin exacte de cette tranche. Le niveau de charge n’est pas interpolé.' : 'Aucune prévision enregistrée pour les cibles de cette période. Le niveau de charge n’est pas interpolé.',
     };
-    rows.push({ start: new Date(from).toISOString(), end: new Date(to).toISOString(), label: aggregation === 'day' ? formatHistoryValue(day.date, { type: 'date' }) : timeText(from), values, notes });
+    // One endpoint labels both the preceding energy period and its latest SOC.
+    const label = aggregation === 'day' ? formatHistoryValue(day.date, { type: 'date' }) : to === end ? '24:00' : timeText(to);
+    const rangeLabel = aggregation === 'day' ? label : `${timeText(from)}–${label}`;
+    rows.push({ start: new Date(from).toISOString(), end: new Date(to).toISOString(), label, rangeLabel, values, notes });
   }
-  const counts = new Map(), occurrences = new Map();
-  for (const row of rows) counts.set(row.label, (counts.get(row.label) ?? 0) + 1);
-  for (const row of rows) if (counts.get(row.label) > 1) {
-    const label = row.label, count = (occurrences.get(label) ?? 0) + 1;
-    occurrences.set(label, count); row.label = `${label} (${count})`;
+  for (const key of ['label', 'rangeLabel']) {
+    const counts = new Map(), occurrences = new Map();
+    for (const row of rows) counts.set(row[key], (counts.get(row[key]) ?? 0) + 1);
+    for (const row of rows) if (counts.get(row[key]) > 1) {
+      const label = row[key], count = (occurrences.get(label) ?? 0) + 1;
+      occurrences.set(label, count); row[key] = `${label} (${count})`;
+    }
   }
   return { groups, columns, rows, hasData: rows.some(row => columns.some(column => row.values[column.key] !== null)) };
 }

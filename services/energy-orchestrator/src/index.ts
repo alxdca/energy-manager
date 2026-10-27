@@ -3,6 +3,7 @@ import { serve } from '@hono/node-server';
 import type { Server } from 'node:http';
 import { createApi } from './api.js';
 import { createTelemetryReader } from './status.js';
+import { carEnergyCounter } from './car-energy.js';
 import { createEnergyCollector, createObservationCollector } from './energy-collector.js';
 import { createEnergyCounterReader } from './energy-counters.js';
 import { fileURLToPath } from 'node:url';
@@ -45,10 +46,11 @@ const { dailyEnergyStore, batteryHistory } = history;
 const readEnergyCounters = createEnergyCounterReader();
 const collector = createObservationCollector({
   readSample: async () => {
-    const counters = await readEnergyCounters();
+    const [counters, charger] = await Promise.all([readEnergyCounters(), controls.wattpilot.readStatus().catch(() => null)]);
     return {
       battery: counters.battery ?? null,
       solar: counters.solar, household: counters.household,
+      car: charger ? carEnergyCounter(charger) : null,
     };
   },
   store: { record: history.record, flush: history.flush },
@@ -146,7 +148,7 @@ const estimates = createEstimateService({
   readSavedSolarForecast: async date => {
     const saved = await history.readForecast(date);
     if (!saved) return null;
-    const { consumption: _consumption, carCharging: _car, forecastPeriod: _period, ...solar } = saved.forecast;
+    const { consumption: _consumption, carEstimates: _car, forecastPeriod: _period, ...solar } = saved.forecast;
     return solar;
   },
   readTelemetry: telemetry,

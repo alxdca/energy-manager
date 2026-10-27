@@ -30,7 +30,7 @@ test('household weights recency, converts Wh to kWh, and never invents missing s
   near(forecast.slots.find(s => s.start === '2026-10-28T07:15:00.000Z')!.estimatedConsumptionKwh, 0);
   assert.equal(forecast.estimatedConsumptionKwh, null);
   assert.equal(forecast.status, 'unavailable');
-  assert.equal(forecast.scope, 'household_total'); assert.equal(forecast.excludesCar, false);
+  assert.equal(forecast.scope, 'household_excluding_car'); assert.equal(forecast.excludesCar, true);
   assert.equal(forecast.training!.completeSamplingDays, 0);
 });
 

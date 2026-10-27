@@ -78,7 +78,7 @@ test('models trained with measured interval metadata rebuild once using fixed qu
   Object.assign(legacy, { version: 'household-profile-v1' });
   const upgraded = fixture(legacy); await upgraded.service.refresh(); await upgraded.service.refresh();
   assert.equal(upgraded.models.length, 1);
-  assert.equal(upgraded.models[0].version, 'household-profile-v2');
+  assert.equal(upgraded.models[0].version, 'household-profile-v3-car-free');
   assert.notEqual(upgraded.models[0].id, legacy.id);
 });
 

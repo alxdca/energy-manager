@@ -126,6 +126,7 @@ test('delta updates merge, keep power observation age and never invent missing t
   assert.equal(initial.charging, true);
   assert.equal(initial.sessionEnergyWh, 1240);
   assert.equal(initial.totalEnergyWh, 100000);
+  assert.match(initial.energyCounterSource!, /^Wattpilot:/);
   f.advance(1000);
   f.sockets[0].receive({ type: 'deltaStatus', status: { car: 1, amp: 10 } });
   await tick();

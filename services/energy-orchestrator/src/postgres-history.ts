@@ -9,12 +9,14 @@ import type { CarChargingForecast } from './car-types.js';
 import { getCalendarDayBounds, getLocalDate, timeZone } from './policy.js';
 import type { Telemetry } from './status.js';
 import type { AsyncDailyEnergyReader, HistoryReader } from './history-reader.js';
-import { postgresSchema, householdForecastMigration, forecastTableRenameMigration, householdModelMetadataMigration } from './postgres-schema.js';
+import { postgresSchema, householdForecastMigration, forecastTableRenameMigration, householdModelMetadataMigration, carEnergyMigration, carForecastMigration } from './postgres-schema.js';
+import { carEstimatePoints, type CarEstimatePoint } from './car-forecast-history.js';
 import { createHouseholdArchive, householdForecastKey, type HouseholdPublication } from './household-postgres.js';
 import { createBatteryOrigin } from './battery-origin.js';
 import { hasUsableForecast, type SolarForecast } from './forecast.js';
 import { energyEstimatePoints, solarEstimatePoints, type EnergyEstimatePoint, type SolarEstimatePoint } from './energy-estimate-history.js';
-import { summarizeRecordedEnergy } from './recorded-energy.js';
+import { summarizeRecordedEnergy, summarizeSeparatedEnergy } from './recorded-energy.js';
+import { createCarEnergySampler } from './car-energy.js';
 import { createObservationSampler } from './observation-sampler.js';
 import type { ObservationPoint, ObservationSample } from './observation-types.js';
 
@@ -23,6 +25,8 @@ const observationCheckpointKey = 'observation_checkpoint_v1';
 const originCheckpointKey = 'battery_origin_checkpoint_v1';
 const forecastBatchKey = 'forecast_batch_v1';
 const bucketMs = 900_000;
+const carCheckpointKey = 'car_observation_checkpoint_v1';
+const separationStartKey = 'car_separation_started_at';
 
 type SolarContext = Omit<SolarForecast, 'estimatedProductionKwh' | 'hourly' | 'quarterHourly'>;
 type ConsumptionContext = Omit<ConsumptionForecast, 'estimatedConsumptionKwh' | 'baselineKwh' | 'hourly' | 'quarterHourly'>;
@@ -31,7 +35,6 @@ interface ForecastContext {
   solar: SolarContext;
   temperatures: Array<{ start: string; temperatureC: number | null }>;
   consumption: ConsumptionContext | null;
-  carCharging?: CarChargingForecast;
 }
 interface ForecastMetadata {
   calculatedAt: string;
@@ -44,6 +47,7 @@ interface SavedEstimates {
   battery: Array<{ at: string; socPercent: number }>;
   solar: SolarEstimatePoint[];
   house: EnergyEstimatePoint[];
+  car: CarEstimatePoint[];
 }
 
 function groupedHours<T extends { start: string; end: string }>(quarters: T[], key: keyof T): T[] {
@@ -128,11 +132,32 @@ export async function createPostgresHistory(options: { connectionString: string;
         CREATE TABLE IF NOT EXISTS energy_history.metadata (key text PRIMARY KEY, value jsonb NOT NULL)`);
       const version = await client.query('SELECT value FROM energy_history.metadata WHERE key = $1', ['schema_version']);
       const currentVersion = version.rows[0]?.value;
-      if (currentVersion !== undefined && currentVersion !== 6 && currentVersion !== 7 && currentVersion !== 8 && currentVersion !== 9) throw new Error('Version de schéma PostgreSQL non prise en charge.');
-      if (currentVersion !== 8 && currentVersion !== 9) await client.query(forecastTableRenameMigration);
+      if (currentVersion !== undefined && ![6, 7, 8, 9, 10, 11].includes(currentVersion)) throw new Error('Version de schéma PostgreSQL non prise en charge.');
+      if (currentVersion === undefined || currentVersion === 6 || currentVersion === 7) await client.query(forecastTableRenameMigration);
       await client.query(postgresSchema);
       if (currentVersion === undefined || currentVersion === 6) await client.query(householdForecastMigration);
-      if (currentVersion !== 9) await client.query(householdModelMetadataMigration);
+      if (currentVersion === undefined || currentVersion <= 8) await client.query(householdModelMetadataMigration);
+      if (currentVersion === undefined || currentVersion <= 9) await client.query(carEnergyMigration);
+      if (currentVersion !== 11) {
+        await client.query(carForecastMigration);
+        // Retain the last plan's known ongoing/future predictions at its ORIGINAL publication cutoff.
+        // Earlier quarters have no archived forecast; never reconstruct them from a later plan.
+        type LegacyMetadata = Omit<ForecastMetadata, 'forecasts'> & {
+          forecasts: Array<ForecastContext & { carCharging?: CarChargingForecast }>;
+        };
+        const legacy = (await client.query<{ value: LegacyMetadata }>(
+          'SELECT value FROM energy_history.metadata WHERE key = $1', [forecastBatchKey])).rows[0]?.value;
+        if (legacy?.forecasts?.some(context => context.carCharging !== undefined)) {
+          const points = carEstimatePoints(legacy.forecasts, new Date(legacy.calculatedAt));
+          if (points.length) await client.query(`INSERT INTO energy_history.car_forecasts (interval_start, energy_kwh)
+            SELECT x.start::timestamptz, x."estimatedChargingKwh" FROM jsonb_to_recordset($1::jsonb)
+              AS x(start text, "estimatedChargingKwh" double precision) ON CONFLICT (interval_start) DO NOTHING`, [JSON.stringify(points)]);
+          await writeMetadata(client, forecastBatchKey, JSON.stringify({ ...legacy,
+            forecasts: legacy.forecasts.map(({ carCharging: _car, ...context }) => context) }));
+        }
+      }
+      await client.query(`INSERT INTO energy_history.metadata (key, value) VALUES ($1, $2::jsonb)
+        ON CONFLICT (key) DO NOTHING`, [separationStartKey, JSON.stringify(clock().toISOString())]);
       await client.query(`INSERT INTO energy_history.metadata (key, value) VALUES ($1, $2::jsonb)
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, ['writer_identity', JSON.stringify(writerIdentity)]);
     });
@@ -146,14 +171,21 @@ export async function createPostgresHistory(options: { connectionString: string;
   let sampler: ReturnType<typeof createObservationSampler>;
   let batteryOrigin: ReturnType<typeof createBatteryOrigin>;
   let savedObservationState: string;
+  let carSampler: ReturnType<typeof createCarEnergySampler>;
+  let savedCarState: string;
+  let separationStartedAt: string;
   let savedOriginState: string;
   let storageError: string | null = null;
   try {
     const checkpoints = await pool.query('SELECT key, value FROM energy_history.metadata WHERE key = ANY($1::text[])',
-      [[observationCheckpointKey, originCheckpointKey]]);
+      [[observationCheckpointKey, originCheckpointKey, carCheckpointKey, separationStartKey]]);
     sampler = createObservationSampler({ now: clock,
       state: checkpoints.rows.find(row => row.key === observationCheckpointKey)?.value });
     savedObservationState = JSON.stringify(sampler.pending().state);
+    carSampler = createCarEnergySampler({ now: clock,
+      state: checkpoints.rows.find(row => row.key === carCheckpointKey)?.value });
+    savedCarState = JSON.stringify(carSampler.pending().state);
+    separationStartedAt = checkpoints.rows.find(row => row.key === separationStartKey)!.value;
     batteryOrigin = createBatteryOrigin({ capacityKwh: options.batteryCapacityKwh, now: clock,
       checkpoint: checkpoints.rows.find(row => row.key === originCheckpointKey)?.value });
     savedOriginState = JSON.stringify(batteryOrigin.checkpoint());
@@ -167,7 +199,7 @@ export async function createPostgresHistory(options: { connectionString: string;
   function writable() {
     if (closed || closing) throw new Error('Historique PostgreSQL fermé.');
   }
-  async function writePoints(client: pg.PoolClient, channel: 'battery' | 'solar' | 'house', points: ObservationPoint[]) {
+  async function writePoints(client: pg.PoolClient, channel: 'battery' | 'solar' | 'house' | 'car' | 'house_only', points: ObservationPoint[]) {
     if (points.length) await client.query(`INSERT INTO energy_history.${channel}_observations (observed_at, value)
       SELECT x.at::timestamptz, x.value FROM jsonb_to_recordset($1::jsonb) AS x(at text, value double precision)
       ON CONFLICT (observed_at) DO NOTHING`, [JSON.stringify(points)]);
@@ -177,7 +209,7 @@ export async function createPostgresHistory(options: { connectionString: string;
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [key, value]);
   }
   function record(sample: ObservationSample, at = clock()) {
-    writable(); sampler.record(sample, at);
+    writable(); sampler.record(sample, at); carSampler.record(sample, at);
   }
   /** Independent fast safety accounting; this never supplies observation candidates. */
   function recordTelemetry(telemetry: Telemetry, at = clock()) {
@@ -188,18 +220,25 @@ export async function createPostgresHistory(options: { connectionString: string;
     const operation = flushTail.then(async () => {
       if (closed) throw new Error('Historique PostgreSQL fermé.');
       sampler.finalize(clock());
+      carSampler.finalize(clock());
       const snapshot = sampler.pending();
+      const separated = carSampler.pending(), carCheckpoint = JSON.stringify(separated.state);
       const checkpoint = JSON.stringify(snapshot.state), origin = JSON.stringify(batteryOrigin.checkpoint());
       if (snapshot.battery.length || snapshot.solar.length || snapshot.household.length
+        || separated.solar.length || separated.household.length || carCheckpoint !== savedCarState
         || checkpoint !== savedObservationState || origin !== savedOriginState) {
         await transaction(async client => {
           await writePoints(client, 'battery', snapshot.battery);
           await writePoints(client, 'solar', snapshot.solar);
           await writePoints(client, 'house', snapshot.household);
+          await writePoints(client, 'car', separated.solar);
+          await writePoints(client, 'house_only', separated.household);
+          if (carCheckpoint !== savedCarState) await writeMetadata(client, carCheckpointKey, carCheckpoint);
           if (checkpoint !== savedObservationState) await writeMetadata(client, observationCheckpointKey, checkpoint);
           if (origin !== savedOriginState) await writeMetadata(client, originCheckpointKey, origin);
         });
         sampler.acknowledge(snapshot);
+        carSampler.acknowledge(separated); savedCarState = carCheckpoint;
         savedObservationState = checkpoint; savedOriginState = origin;
       }
     });
@@ -216,28 +255,36 @@ export async function createPostgresHistory(options: { connectionString: string;
     if (!Number.isFinite(day.getTime()) || day.toISOString().slice(0, 10) !== date) throw new Error('Date de relevé invalide.');
     return getCalendarDayBounds(day);
   }
-  async function readPoints(channel: 'battery' | 'solar' | 'household', date: string, now: Date): Promise<ObservationPoint[]> {
+  async function readPoints(channel: 'battery' | 'solar' | 'household' | 'car' | 'house_only', date: string, now: Date): Promise<ObservationPoint[]> {
     const { start, end } = dayBounds(date), table = channel === 'household' ? 'house' : channel;
     const result = await pool.query<{ at: Date; value: number }>(`SELECT observed_at AS at, value
       FROM energy_history.${table}_observations WHERE observed_at >= $1 AND observed_at < $2 AND observed_at <= $3 ORDER BY observed_at`,
     [start, end, now]);
     const values = new Map(result.rows.map(row => [row.at.toISOString(), { at: row.at.toISOString(), value: row.value }]));
-    for (const point of sampler.pending()[channel]) {
+    const pending = channel === 'car' ? carSampler.pending().solar
+      : channel === 'house_only' ? carSampler.pending().household : sampler.pending()[channel];
+    for (const point of pending) {
       const at = Date.parse(point.at);
       if (at >= start.getTime() && at < end.getTime() && at <= now.getTime()) values.set(point.at, point);
     }
     return [...values.values()].sort((a, b) => a.at.localeCompare(b.at));
   }
   async function energyDay(date: string, now = clock()) {
-    const [solar, household] = await Promise.all([readPoints('solar', date, now), readPoints('household', date, now)]);
-    const summary = summarizeRecordedEnergy(date, { solar, household }, now);
+    const [solar, totalHousehold, houseOnly, car] = await Promise.all([readPoints('solar', date, now), readPoints('household', date, now),
+      readPoints('house_only', date, now), readPoints('car', date, now)]);
+    const legacy = date < getLocalDate(new Date(separationStartedAt));
+    const household = legacy ? totalHousehold : houseOnly;
+    const summary = legacy ? summarizeRecordedEnergy(date, { solar, household }, now)
+      : summarizeSeparatedEnergy(date, { solar, household, car, totalHousehold }, now);
     if (storageError) for (const value of [summary.dailyEnergy, summary.measurements]) {
       value.storageStatus = 'error'; value.error = storageError;
     }
-    return { ...summary, solar, household };
+    return { ...summary, solar, household, car, totalHousehold };
   }
   const dateSources = `SELECT (observed_at AT TIME ZONE 'Europe/Zurich')::date AS date FROM energy_history.solar_observations
-    UNION SELECT (observed_at AT TIME ZONE 'Europe/Zurich')::date AS date FROM energy_history.house_observations`;
+    UNION SELECT (observed_at AT TIME ZONE 'Europe/Zurich')::date AS date FROM energy_history.house_observations
+    UNION SELECT (observed_at AT TIME ZONE 'Europe/Zurich')::date AS date FROM energy_history.car_observations
+    UNION SELECT (observed_at AT TIME ZONE 'Europe/Zurich')::date AS date FROM energy_history.house_only_observations`;
   const dailyEnergyStore: AsyncDailyEnergyReader = {
     async summary(date, now = clock()) { return (await energyDay(date, now)).dailyEnergy; },
     async hourly(date, now = clock()) { return (await energyDay(date, now)).measurements; },
@@ -246,7 +293,7 @@ export async function createPostgresHistory(options: { connectionString: string;
       const result = await pool.query<{ date: string }>(`SELECT to_char(date, 'YYYY-MM-DD') AS date
         FROM (${dateSources}) dates WHERE ($1::date IS NULL OR date < $1::date) ORDER BY date DESC LIMIT $2`, [before ?? null, count]);
       const pending = sampler.pending();
-      const dates = new Set([...result.rows.map(row => row.date), ...[...pending.solar, ...pending.household].map(point => getLocalDate(new Date(point.at)))]);
+      const dates = new Set([...result.rows.map(row => row.date), ...[...pending.solar, ...pending.household, ...carSampler.pending().solar, ...carSampler.pending().household].map(point => getLocalDate(new Date(point.at)))]);
       return Promise.all([...dates].filter(date => !before || date < before).sort().reverse().slice(0, count)
         .map(async date => (await energyDay(date, now)).dailyEnergy));
     },
@@ -267,21 +314,24 @@ export async function createPostgresHistory(options: { connectionString: string;
       household: HouseholdPublication | null;
       battery: Array<{ at: string; socPercent: number }>;
       solar: Array<{ start: string; estimatedProductionKwh: number }>;
-      house: Array<{ start: string; estimatedConsumptionKwh: number }>;
+      house: Array<{ start: string; estimatedConsumptionKwh: number; excludesCar: boolean }>;
+      car: Array<{ start: string; estimatedChargingKwh: number }>;
     }>(`SELECT (SELECT value FROM energy_history.metadata WHERE key = $3) AS metadata,
       (SELECT value FROM energy_history.metadata WHERE key = $4) AS household,
       COALESCE((SELECT json_agg(json_build_object('at', target_at, 'socPercent', soc_percent) ORDER BY target_at)
         FROM energy_history.battery_forecasts WHERE target_at >= $1 AND target_at <= $2), '[]'::json) AS battery,
       COALESCE((SELECT json_agg(json_build_object('start', interval_start, 'estimatedProductionKwh', energy_kwh) ORDER BY interval_start)
         FROM energy_history.solar_forecasts WHERE interval_start >= $1 AND interval_start < $2), '[]'::json) AS solar,
-      COALESCE((SELECT json_agg(json_build_object('start', interval_start, 'estimatedConsumptionKwh', energy_kwh) ORDER BY interval_start)
-        FROM energy_history.house_forecasts WHERE interval_start >= $1 AND interval_start < $2), '[]'::json) AS house`, [start, end, forecastBatchKey, householdForecastKey]);
+      COALESCE((SELECT json_agg(json_build_object('start', interval_start, 'estimatedConsumptionKwh', energy_kwh, 'excludesCar', excludes_car) ORDER BY interval_start)
+        FROM energy_history.house_forecasts WHERE interval_start >= $1 AND interval_start < $2), '[]'::json) AS house,
+      COALESCE((SELECT json_agg(json_build_object('start', interval_start, 'estimatedChargingKwh', energy_kwh) ORDER BY interval_start)
+        FROM energy_history.car_forecasts WHERE interval_start >= $1 AND interval_start < $2), '[]'::json) AS car`, [start, end, forecastBatchKey, householdForecastKey]);
     const row = result.rows[0];
     const interval = <T extends { start: string }>(point: T) => ({ ...point,
       start: new Date(point.start).toISOString(), end: new Date(Date.parse(point.start) + bucketMs).toISOString() });
     const sources = new Map(row.household?.forecasts.find(forecast => forecast.date === date)?.slots.map(slot => [slot.start, slot.source]));
     return { metadata: row.metadata, household: row.household, battery: row.battery.map(point => ({ ...point, at: new Date(point.at).toISOString() })),
-      solar: row.solar.map(interval), house: row.house.map(point => {
+      solar: row.solar.map(interval), car: row.car.map(interval), house: row.house.map(point => {
         const value = interval(point), source = sources.get(value.start);
         return { ...value, ...(source ? { source } : {}) };
       }) };
@@ -298,15 +348,15 @@ export async function createPostgresHistory(options: { connectionString: string;
     const contexts: ForecastContext[] = batch.forecasts.map(forecast => {
       dayBounds(forecast.date);
       const { estimatedProductionKwh: _solarEnergy, hourly: _solarHours, quarterHourly: quarters, consumption,
-        carCharging, carChargingContext: _carContext, ...solar } = forecast;
+        carCharging: _car, carChargingContext: _carContext, ...solar } = forecast;
       const { estimatedConsumptionKwh: _houseEnergy, baselineKwh: _baselineEnergy, hourly: _houseHours,
         quarterHourly: _houseQuarters, ...house } = consumption;
       return { date: forecast.date, solar, temperatures: quarters?.map(point => ({ start: point.start, temperatureC: point.temperatureC })) ?? [],
-        consumption: consumption.date === forecast.date && consumptionIntervals(consumption) ? house : null,
-        ...(carCharging ? { carCharging } : {}) };
+        consumption: consumption.date === forecast.date && consumptionIntervals(consumption) ? house : null };
     });
     const solar = solarEstimatePoints(batch.forecasts, at);
     const house = energyEstimatePoints(batch.forecasts, at);
+    const car = carEstimatePoints(batch.forecasts, at);
     const projection = batch.projection;
     const observedAt = Date.parse(projection.observedAt ?? '');
     const validProjection = projection.status === 'available' && ['automatic_planning', 'passive_operation', 'manual_charging'].includes(projection.assumption)
@@ -326,12 +376,14 @@ export async function createPostgresHistory(options: { connectionString: string;
       // ON CONFLICT below still lets a first-ever batch fill a missing active quarter.
       const horizon = new Date((Math.floor(cutoff / bucketMs) + 1) * bucketMs);
       await client.query('DELETE FROM energy_history.solar_forecasts WHERE interval_start >= $1', [horizon]);
+      await client.query('DELETE FROM energy_history.car_forecasts WHERE interval_start >= $1', [horizon]);
       if (!household.rowCount) await client.query('DELETE FROM energy_history.house_forecasts WHERE interval_start >= $1', [horizon]);
       await client.query('DELETE FROM energy_history.battery_forecasts WHERE target_at > $1', [at]);
       for (const [table, points, field] of [
         ['solar_forecasts', solar, 'estimatedProductionKwh'], ['house_forecasts', house, 'estimatedConsumptionKwh'],
-      ] as const) if (points.length && (table !== 'house_forecasts' || !household.rowCount)) await client.query(`INSERT INTO energy_history.${table} (interval_start, energy_kwh)
-        SELECT x.start::timestamptz, x."${field}" FROM jsonb_to_recordset($1::jsonb) AS x(start text, "${field}" double precision)
+        ['car_forecasts', car, 'estimatedChargingKwh'],
+      ] as const) if (points.length && (table !== 'house_forecasts' || !household.rowCount)) await client.query(`INSERT INTO energy_history.${table} (interval_start, energy_kwh${table === 'house_forecasts' ? ', excludes_car' : ''})
+        SELECT x.start::timestamptz, x."${field}"${table === 'house_forecasts' ? ', true' : ''} FROM jsonb_to_recordset($1::jsonb) AS x(start text, "${field}" double precision)
         ON CONFLICT (interval_start) DO NOTHING`, [JSON.stringify(points)]);
       if (battery.length) await client.query(`INSERT INTO energy_history.battery_forecasts (target_at, soc_percent)
         SELECT x.at::timestamptz, x."socPercent" FROM jsonb_to_recordset($1::jsonb) AS x(at text, "socPercent" double precision)`, [JSON.stringify(battery)]);
@@ -350,8 +402,8 @@ export async function createPostgresHistory(options: { connectionString: string;
     // beginning at the active quarter.
     const from = Math.min(end.getTime(), Math.max(start.getTime(), Math.floor(cutoff / 3_600_000) * 3_600_000));
     const inHorizon = (point: { start: string }) => Date.parse(point.start) >= from;
-    // Learned estimates include car loads. Reconstruct the controller's car-free baseline
-    // from its saved configuration instead of feeding the household series into planning.
+    // Learned estimates remain in observation mode. Reconstruct the controller's baseline
+    // from its saved configuration instead of promoting the learned series into planning.
     const baseline = saved.household && context.consumption
       ? estimateConsumption(date, { baselinePowerW: context.consumption.baselinePowerW }).quarterHourly : saved.house;
     const solar = saved.solar.filter(inHorizon), house = baseline.filter(inHorizon)
@@ -370,7 +422,7 @@ export async function createPostgresHistory(options: { connectionString: string;
       productionPeriodStart: quarterHourly ? new Date(from).toISOString() : null,
       productionPeriodEnd: quarterHourly ? end.toISOString() : null,
       estimatedProductionKwh: quarterHourly ? quarterHourly.reduce((sum, point) => sum + point.estimatedProductionKwh, 0) : null,
-      consumption, ...(context.carCharging ? { carCharging: context.carCharging } : {}),
+      consumption, carEstimates: saved.car.filter(inHorizon),
       forecastPeriod: { start: start.toISOString(), end: end.toISOString(), from: new Date(from).toISOString() } },
     projection: { ...saved.metadata.projection,
       points: saved.metadata.projection.status === 'available' ? saved.battery.filter(point => Date.parse(point.at) > cutoff) : [] } };
@@ -387,8 +439,9 @@ export async function createPostgresHistory(options: { connectionString: string;
         dailyEnergy: energy.dailyEnergy, measurements: energy.measurements, battery: observed,
         historicalEstimated: { status: 'ready', error: null, points: saved.battery,
           projection: saved.metadata?.projection ?? { status: 'unavailable', reason: 'awaiting_evaluation', assumption: 'automatic_planning' } },
-        observations: { method: 'counter_differences' as const, solar: energy.solar, household: energy.household },
-        solarEstimates: saved.solar, energyEstimates: saved.house,
+        observations: { method: 'counter_differences' as const, solar: energy.solar, household: energy.household,
+          car: energy.car, totalHousehold: energy.totalHousehold },
+        solarEstimates: saved.solar, energyEstimates: saved.house, carEstimates: saved.car,
         householdPredictions: saved.house, ...(solar ? { solarForecast: { status: solar.status, error: solar.error,
           fetchedAt: solar.fetchedAt, weatherModel: solar.weatherModel } } : {}) };
     },

@@ -16,7 +16,7 @@ export interface HouseholdForecastArchive {
 export interface HouseholdTrainingStatus {
   state: 'idle' | 'training' | 'error'; error: string | null; lastTrainedAt: string | null;
   nextTrainingAt: string | null; modelId: string | null; training: HouseholdModel['training'] | null;
-  weatherStatus: HouseholdModel['weatherStatus'] | null; mode: 'observation'; scope: 'household_total';
+  weatherStatus: HouseholdModel['weatherStatus'] | null; mode: 'observation'; scope: 'household_excluding_car';
   modelVersion: string | null;
   calibration: HouseholdModel['calibration'];
   settings: typeof householdLearningSettings & { automaticTraining: 'daily'; fallback: HouseholdFallbackConfig };
@@ -36,7 +36,7 @@ export function createHouseholdService(options: {
   let lastAttempt: number | null = null;
   const status = (): HouseholdTrainingStatus => ({ state: training || requestedTraining ? 'training' : error ? 'error' : 'idle', error,
     lastTrainedAt: model?.trainedAt ?? null, nextTrainingAt: model?.validUntil ?? null, modelId: model?.id ?? null,
-    training: model?.training ?? null, weatherStatus: model?.weatherStatus ?? null, mode: 'observation', scope: 'household_total',
+    training: model?.training ?? null, weatherStatus: model?.weatherStatus ?? null, mode: 'observation', scope: 'household_excluding_car',
     modelVersion: model?.version ?? null, calibration: model?.calibration ? { ...model.calibration } : null,
     settings: { ...householdLearningSettings, automaticTraining: 'daily', fallback: { ...fallback } } });
   async function calculate(forceTraining: boolean): Promise<void> {

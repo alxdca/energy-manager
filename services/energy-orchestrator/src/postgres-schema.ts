@@ -75,3 +75,23 @@ END;
 $migration$;
 UPDATE energy_history.metadata SET value = '9'::jsonb WHERE key = 'schema_version';
 `;
+
+/** v9 → v10: preserve total observations and add independently measured car/house channels. */
+export const carEnergyMigration = `
+${(['car', 'house_only'] as const).map(channel => `
+CREATE TABLE IF NOT EXISTS energy_history.${channel}_observations (
+  observed_at timestamptz PRIMARY KEY CHECK (isfinite(observed_at)),
+  value double precision NOT NULL CHECK (value >= 0 AND value < 'Infinity'::double precision)
+);`).join('\n')}
+ALTER TABLE energy_history.house_forecasts ADD COLUMN IF NOT EXISTS excludes_car boolean NOT NULL DEFAULT false;
+UPDATE energy_history.metadata SET value = '10'::jsonb WHERE key = 'schema_version';
+`;
+
+/** v10 → v11: car forecasts have the same immutable quarter-hour energy contract as solar/house. */
+export const carForecastMigration = `
+CREATE TABLE IF NOT EXISTS energy_history.car_forecasts (
+  interval_start timestamptz PRIMARY KEY CHECK (isfinite(interval_start) AND EXTRACT(EPOCH FROM interval_start) % 900 = 0),
+  energy_kwh double precision NOT NULL CHECK (energy_kwh >= 0 AND energy_kwh < 'Infinity'::double precision)
+);
+UPDATE energy_history.metadata SET value = '11'::jsonb WHERE key = 'schema_version';
+`;

@@ -1,7 +1,7 @@
 import { getCalendarDayBounds, getLocalDate, timeZone } from './policy.js';
 import type { ObservationPoint } from './observation-types.js';
 
-export const householdModelVersion = 'household-profile-v2';
+export const householdModelVersion = 'household-profile-v3-car-free';
 export const householdLearningSettings = {
   historyDays: 84, halfLifeDays: 14, stepMinutes: 15,
   minimumCompleteDays: 14, minimumMatchingWeekdays: 4, weekdayFactor: 4,
@@ -32,7 +32,7 @@ export interface WeatherCalibration {
 }
 export interface HouseholdModel {
   id: string; version: typeof householdModelVersion; trainedAt: string; trainingDate: string; validUntil: string;
-  scope: 'household_total'; mode: 'observation';
+  scope: 'household_excluding_car'; mode: 'observation';
   training: { from: string; to: string; usableDays: number; completeSamplingDays: number; observations: number;
     weatherDays: number; halfLifeDays: 14; originalStepMinutes: 15; alignment: 'nominal_quarter_approximation' };
   profiles: Record<string, ProfileSlot>;
@@ -51,7 +51,7 @@ export interface HouseholdForecastSlot {
 export interface HouseholdForecast {
   date: string; issuedAt: string; modelId: string | null; trainedAt: string | null; modelVersion: typeof householdModelVersion;
   source: 'measured_history' | 'recent_average' | 'configured_baseline' | 'mixed';
-  scope: 'household_total'; excludesCar: false; mode: 'observation'; stepMinutes: 15; unit: 'kWh';
+  scope: 'household_excluding_car'; excludesCar: true; mode: 'observation'; stepMinutes: 15; unit: 'kWh';
   status: 'unavailable' | 'learning' | 'available' | 'fallback';
   method: 'weighted_profile' | 'weighted_profile_weather' | 'recent_average' | 'configured_baseline' | 'mixed';
   estimatedConsumptionKwh: number | null; fallbackReason: string | null; uncertainty: 'uncalibrated';
@@ -250,7 +250,7 @@ export function trainHouseholdModel(input: { id: string; at: Date; observations:
   const learned = learnWeather(days, weather);
   return { id: input.id, version: householdModelVersion, trainedAt: input.at.toISOString(), trainingDate: today,
     validUntil: getCalendarDayBounds(new Date(`${shiftDate(today, 1)}T00:00:00Z`)).start.toISOString(),
-    scope: 'household_total', mode: 'observation', training: { from, to: today, usableDays: days.length,
+    scope: 'household_excluding_car', mode: 'observation', training: { from, to: today, usableDays: days.length,
       completeSamplingDays: days.filter(d => d.complete).length, observations: days.reduce((n, d) => n + d.samples.length, 0),
       weatherDays: learned.days, halfLifeDays: householdLearningSettings.halfLifeDays,
       originalStepMinutes: householdLearningSettings.stepMinutes, alignment: 'nominal_quarter_approximation' },
@@ -263,7 +263,7 @@ export function trainHouseholdModel(input: { id: string; at: Date; observations:
 export function predictHousehold(input: { date: string; at: Date; model: HouseholdModel | null; weather?: HouseholdWeather;
   observations?: HouseholdObservation[]; unavailableReason?: string }): HouseholdForecast {
   const { date, at, model } = input;
-  const valid = model && model.version === householdModelVersion && model.scope === 'household_total'
+  const valid = model && model.version === householdModelVersion && model.scope === 'household_excluding_car'
     && Date.parse(model.trainedAt) <= at.getTime() && at.getTime() < Date.parse(model.validUntil);
   const bounds = householdDaySlots(date);
   const weather = input.weather?.kind === 'forecast' && Date.parse(input.weather.availableAt) <= at.getTime()
@@ -304,7 +304,7 @@ export function predictHousehold(input: { date: string; at: Date; model: Househo
       status: complete ? 'approximate' : 'incomplete', measuredThrough: new Date(Math.floor(at.getTime() / quarterMs) * quarterMs).toISOString() };
   }
   return { date, issuedAt: at.toISOString(), modelId: valid ? model.id : null, trainedAt: valid ? model.trainedAt : null,
-    modelVersion: householdModelVersion, source: 'measured_history', scope: 'household_total', excludesCar: false,
+    modelVersion: householdModelVersion, source: 'measured_history', scope: 'household_excluding_car', excludesCar: true,
     mode: 'observation', stepMinutes: 15, unit: 'kWh', status: total === null ? 'unavailable'
       : model!.training.completeSamplingDays < 14 || slots.some(s => s.weekdayFactor === 1) ? 'learning' : 'available',
     method: calibration ? 'weighted_profile_weather' : 'weighted_profile', estimatedConsumptionKwh: total,

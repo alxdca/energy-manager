@@ -7,6 +7,7 @@ export interface EnergyEstimatePoint {
   start: string;
   end: string;
   estimatedConsumptionKwh: number | null;
+  excludesCar?: boolean;
   source?: 'learned_profile' | 'recent_average' | 'configured_baseline';
 }
 

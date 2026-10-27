@@ -16,6 +16,7 @@ export interface ObservationSample {
   battery: ObservationPoint | null;
   solar: EnergyCounterPoint | null;
   household: EnergyCounterPoint | null;
+  car?: EnergyCounterPoint | null;
 }
 export interface FinalizedObservationState {
   version: 1;

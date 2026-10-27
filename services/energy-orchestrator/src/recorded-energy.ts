@@ -59,3 +59,26 @@ export function summarizeRecordedEnergy(date: string, points: { solar: Observati
     firstObservationAt: first[0] ?? null, lastObservationAt: last.at(-1) ?? null },
     measurements: { ...metadata, dayHours: hours.length as 23 | 24 | 25, hours, quarterHours } };
 }
+
+/** New days expose verified house-only intervals; raw totals remain available independently. */
+export function summarizeSeparatedEnergy(date: string, points: { solar: ObservationPoint[]; household: ObservationPoint[];
+  car: ObservationPoint[]; totalHousehold: ObservationPoint[] }, now: Date) {
+  const summary = summarizeRecordedEnergy(date, points, now);
+  const extras = summarizeRecordedEnergy(date, { solar: points.car, household: points.totalHousehold }, now);
+  const quarters = (values: ObservationPoint[]) => new Set(values.map(point => Math.floor(Date.parse(point.at) / 900_000)));
+  const known = quarters(points.household);
+  const incomplete = [...quarters(points.totalHousehold)].some(quarter => !known.has(quarter));
+  for (const value of [summary.dailyEnergy, summary.measurements]) {
+    value.householdIncludesCar = false;
+    value.car = extras.dailyEnergy.solar;
+    value.totalHousehold = extras.dailyEnergy.household;
+    value.separationIncomplete = incomplete;
+  }
+  for (const key of ['hours', 'quarterHours'] as const) {
+    summary.measurements[key]?.forEach((hour, i) => {
+      hour.car = extras.measurements[key]![i].solar;
+      hour.totalHousehold = extras.measurements[key]![i].household;
+    });
+  }
+  return summary;
+}

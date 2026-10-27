@@ -23,7 +23,7 @@ function fixture(periodStart = '2026-01-14T23:00:00.000Z', periodEnd = '2026-01-
     solarEstimates: intervals.map(interval => ({ ...interval, estimatedProductionKwh: 2 })) };
 }
 
-test('hourly chart compares house and solar totals for the same 10:00 interval', t => {
+test('chart aligns energy totals and latest SOC at the same period-end timestamp', t => {
   class Element {
     children: Element[] = [];
     attributes = new Map<string, string>();
@@ -44,52 +44,75 @@ test('hourly chart compares house and solar totals for the same 10:00 interval',
   t.mock.method(Date, 'now', () => Date.parse('2026-10-27T12:00:00Z'));
   const day = fixture('2026-10-26T23:00:00.000Z', '2026-10-27T23:00:00.000Z');
   const at = (quarter: number) => new Date(Date.parse('2026-10-27T09:00:00Z') + quarter * quarterMs).toISOString();
-  day.observations.solar = [300, 300, 300, 334].map((value, i) => ({ at: at(i), value }));
-  day.observations.household = [400, 400, 400, 696].map((value, i) => ({ at: at(i), value }));
+  const observedAt = (quarter: number) => new Date(Date.parse(at(quarter + 1)) - 30000).toISOString();
+  day.observations.solar = [300, 300, 300, 334].map((value, i) => ({ at: observedAt(i), value }));
+  day.observations.household = [400, 400, 400, 696].map((value, i) => ({ at: observedAt(i), value }));
+  Object.assign(day.observations, { car: [{ at: at(0), value: 200 }] });
+  Object.assign(day, { carEstimates: [{ start: at(0), end: at(1), estimatedChargingKwh: .15 }] });
   day.solarEstimates = [0, 1, 2, 3].map(i => ({ start: at(i), end: at(i + 1), estimatedProductionKwh: 2.475 / 4 }));
   day.energyEstimates = [{ start: at(0), end: at(1), estimatedConsumptionKwh: .260 }];
-  day.battery.points = [50, 51, 52, 53].map((socPercent, i) => ({ at: at(i), socPercent }));
+  day.battery.points = [50, 51, 52, 53].map((socPercent, i) => ({ at: observedAt(i), socPercent }));
   day.historicalEstimated.points = [60, 61, 62, 63].map((socPercent, i) => ({ at: at(i + 1), socPercent }));
   const chart = new Element('div'), svg = new Element('svg'), status = new Element('p');
   const series = (name: string) => svg.children.filter(node => node.attributes.get('class') === name);
   renderHistoryChart(day, chart, svg, status, 'hour');
+  assert.match(series('chart-car-measured-point')[0].children[0].textContent, /11:00.*Recharge voiture.*200 Wh/);
+  assert.equal(historyTable(day, ['carMeasured'], 'hour').rows[10].values.carMeasured, .2);
+  assert.equal(historyTable(day, ['carEstimated'], 'hour').rows[10].values.carEstimated, .15);
+  assert.match(series('chart-car-estimated-point')[0].children[0].textContent, /Recharge voiture prévue.*150 Wh/);
+  assert.match(series('chart-car-estimated-point')[0].children[0].textContent, /1 sur 4 tranches/);
   const house = series('chart-demand-measured-point')[0], solar = series('chart-solar-measured')[0];
   const tableRow = historyTable(day, allHistorySelection, 'hour').rows[10];
-  assert.equal(tableRow.label, '10:00');
-  assert.equal(house.children[0].textContent, `10:00 · Maison relevée : ${formatHistoryValue(tableRow.values.houseMeasured, { unit: 'Wh' })} Wh`);
-  assert.equal(solar.children[0].textContent, `10:00 · Solaire relevé : ${formatHistoryValue(tableRow.values.solarMeasured, { unit: 'Wh' })} Wh`);
+  assert.equal(tableRow.label, '11:00');
+  assert.equal(house.children[0].textContent, `11:00 · Maison relevée : ${formatHistoryValue(tableRow.values.houseMeasured, { unit: 'Wh' })} Wh`);
+  assert.equal(solar.children[0].textContent, `11:00 · Solaire relevé : ${formatHistoryValue(tableRow.values.solarMeasured, { unit: 'Wh' })} Wh`);
   assert.match(house.children[0].textContent, /1[  '’]896 Wh/);
   assert.match(solar.children[0].textContent, /1[  '’]234 Wh/);
   assert.equal(series('chart-demand-measured-point').length, 1);
   assert.equal(Number(house.attributes.get('cx')), Number(solar.attributes.get('x')) + Number(solar.attributes.get('width')) / 2);
   assert.ok(Number(house.attributes.get('cy')) < Number(solar.attributes.get('y')), 'Higher house consumption must appear above measured solar production');
-  assert.match(series('chart-demand-point')[0].children[0].textContent, /10:00.*260 Wh/);
-  assert.match(series('chart-solar')[0].children[0].textContent, /10:00.*2[  '’]475 Wh/);
+  assert.match(series('chart-demand-point')[0].children[0].textContent, /11:00.*260 Wh/);
+  assert.match(series('chart-solar')[0].children[0].textContent, /11:00.*2[  '’]475 Wh/);
   assert.match(svg.children.find(node => node.tagName === 'desc')!.textContent, /Maison par heure/);
   assert.match(svg.children.find(node => node.tagName === 'desc')!.textContent, /Batterie par heure/);
   assert.equal(series('chart-battery-measured-point').length, 1);
   assert.equal(series('chart-battery-estimated-point').length, 1);
-  assert.equal(series('chart-battery-measured-point')[0].children[0].textContent, '11:00 · Batterie relevée : 53 %');
-  assert.equal(series('chart-battery-estimated-point')[0].children[0].textContent, '11:00 · Batterie prévue : 63 %');
+  assert.match(series('chart-battery-measured-point')[0].children[0].textContent, /^11:00 · Batterie relevée : 53 %\n.*10:59:30/);
+  assert.match(series('chart-battery-estimated-point')[0].children[0].textContent, /^11:00 · Batterie prévue : 63 %\n/);
+  assert.equal(series('chart-battery-measured-point')[0].attributes.get('cx'), house.attributes.get('cx'));
+  assert.equal(series('chart-battery-estimated-point')[0].attributes.get('cx'), house.attributes.get('cx'));
 
   renderHistoryChart(day, chart, svg, status, 'quarter');
   assert.equal(series('chart-demand-measured-point').length, 4);
   assert.equal(series('chart-solar-measured').length, 4);
   assert.equal(series('chart-battery-measured-point').length, 4);
   assert.equal(series('chart-battery-estimated-point').length, 4);
-  assert.match(series('chart-demand-measured-point')[0].children[0].textContent, /10:00.*400 Wh/);
-  assert.match(series('chart-solar-measured')[0].children[0].textContent, /10:00.*300 Wh/);
+  assert.match(series('chart-demand-measured-point')[0].children[0].textContent, /10:15.*400 Wh/);
+  assert.match(series('chart-solar-measured')[0].children[0].textContent, /10:15.*300 Wh/);
+  const quarter = historyTable(day).rows.find((row: any) => row.label === '10:30');
+  assert.equal(quarter.rangeLabel, '10:15–10:30');
+  assert.equal(quarter.values.batteryMeasured, 51);
+  near(quarter.values.solarMeasured, .3);
+  near(quarter.values.houseMeasured, .4);
+  assert.match(quarter.notes.batteryMeasured, /10:29:30/);
+  assert.match(quarter.notes.solarMeasured, /10:29:30/);
+  for (const [index, point] of series('chart-battery-measured-point').entries()) {
+    assert.equal(point.attributes.get('cx'), series('chart-demand-measured-point')[index].attributes.get('cx'));
+    assert.equal(point.attributes.get('cx'), series('chart-battery-estimated-point')[index].attributes.get('cx'));
+  }
 });
 
-test('the joined table exposes six values from quarter-hour history without timestamps or source versions', () => {
-  assert.deepEqual(historyGroups.map((group: any) => [group.id, group.label]), [['solar', 'Solaire'], ['house', 'Maison'], ['battery', 'Batterie']]);
-  assert.deepEqual(allHistorySelection, ['solarEstimated', 'solarMeasured', 'houseEstimated', 'houseMeasured', 'batteryEstimated', 'batteryMeasured']);
+test('the joined table exposes separate car charging alongside household values from quarter-hour history without timestamps or source versions', () => {
+  assert.deepEqual(historyGroups.map((group: any) => [group.id, group.label]), [['solar', 'Solaire'], ['house', 'Maison'], ['car', 'Voiture'], ['battery', 'Batterie']]);
+  assert.deepEqual(allHistorySelection, ['solarEstimated', 'solarMeasured', 'houseEstimated', 'houseMeasured', 'carEstimated', 'carMeasured', 'batteryEstimated', 'batteryMeasured']);
   assert.deepEqual(defaultHistorySelection, allHistorySelection);
   const day = fixture(), original = structuredClone(day);
   const table = historyTable(day, allHistorySelection);
   assert.equal(table.rows.length, 96);
-  assert.equal(table.columns.length, 6);
-  assert.deepEqual(table.columns.map((column: any) => column.label), ['Prévu', 'Mesuré', 'Prévu', 'Mesuré', 'Prévu', 'Mesuré']);
+  assert.equal(table.rows[0].label, '00:15');
+  assert.equal(table.rows.at(-1).label, '24:00');
+  assert.equal(table.columns.length, 8);
+  assert.deepEqual(table.columns.map((column: any) => column.label), ['Prévu', 'Mesuré', 'Prévu', 'Mesuré', 'Prévu', 'Mesuré', 'Prévu', 'Mesuré']);
   assert.equal(table.hasData, true);
   near(table.rows[0].values.houseMeasured, .25);
   near(table.rows[0].values.houseEstimated, .5);
@@ -227,6 +250,11 @@ test('the UTC quarter calendar covers DST days and disambiguates repeated local 
     const table = historyTable(fixture(start, end), allHistorySelection);
     assert.equal(table.rows.length, quarters);
     assert.equal(table.rows[0].start, start); assert.equal(table.rows.at(-1).end, end);
+    assert.equal(table.rows[0].label, '00:15'); assert.equal(table.rows.at(-1).label, '24:00');
+    assert.equal(table.rows[0].rangeLabel, '00:00–00:15');
+    assert.equal(table.rows.at(-1).rangeLabel, '23:45–24:00');
+    if (quarters === 92) assert.ok(table.rows.some((row: any) => row.rangeLabel === '01:45–03:00'));
+    if (quarters === 100) assert.ok(table.rows.some((row: any) => row.rangeLabel === '02:45–02:00'));
     assert.ok(table.rows.every((row: any) => !/UTC|Zurich|GMT|[+]0[12]/.test(row.label)));
     if (quarters === 100) assert.deepEqual(table.rows.filter((row: any) => row.label.startsWith('02:00')).map((row: any) => row.label), ['02:00 (1)', '02:00 (2)']);
   }
@@ -238,10 +266,11 @@ test('repeated autumn pre-target snapshots match their own quarter-end predictio
     { at: '2026-10-25T01:15:00.000Z', socPercent: 60 }];
   day.battery.points = [{ at: '2026-10-25T00:14:30.500Z', socPercent: 51 },
     { at: '2026-10-25T01:14:30.500Z', socPercent: 61 }];
-  const rows = historyTable(day, ['batteryMeasured', 'batteryEstimated']).rows.filter((row: any) => row.label.startsWith('02:00'));
+  const rows = historyTable(day, ['batteryMeasured', 'batteryEstimated']).rows.filter((row: any) => row.label.startsWith('02:15'));
   assert.deepEqual(rows.map((row: any) => [row.label, row.values.batteryMeasured, row.values.batteryEstimated]), [
-    ['02:00 (1)', 51, 50], ['02:00 (2)', 61, 60],
+    ['02:15 (1)', 51, 50], ['02:15 (2)', 61, 60],
   ]);
+  assert.deepEqual(rows.map((row: any) => row.rangeLabel), ['02:00–02:15 (1)', '02:00–02:15 (2)']);
 });
 
 test('numeric and date formatting stays concise with missing values distinct from zero and no timezone text', () => {
@@ -302,6 +331,8 @@ test('hourly view sums quarter energies and keeps the last in-period battery val
   const original = structuredClone(day);
   const table = historyTable(day, allHistorySelection, 'hour');
   assert.equal(table.rows.length, 24);
+  assert.equal(table.rows[0].label, '01:00');
+  assert.equal(table.rows.at(-1).label, '24:00');
   assert.equal(table.rows[0].end, new Date(start + 3600000).toISOString());
   near(table.rows[0].values.houseMeasured, 1);
   near(table.rows[0].values.solarMeasured, 4);

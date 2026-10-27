@@ -36,6 +36,7 @@ export interface WattpilotTelemetry {
   powerWatts: number | null;
   sessionEnergyWh: number | null;
   totalEnergyWh: number | null;
+  energyCounterSource?: string | null;
   limits: { minCurrentAmps: 6; maxCurrentAmps: number | null };
   deviceLeaseSupported: false;
   automation: WattpilotAutomationStatus | null;
@@ -176,6 +177,7 @@ function parseStatus(body: unknown, now: Date): WattpilotTelemetry {
     phaseMode: phaseSwitchingSupported ? value.phaseMode as WattpilotTelemetry['phaseMode'] : null,
     phaseSwitchingSupported,
     powerWatts: nonnegative(value.powerWatts), sessionEnergyWh: nonnegative(value.sessionEnergyWh), totalEnergyWh: nonnegative(value.totalEnergyWh),
+    energyCounterSource: typeof value.energyCounterSource === 'string' && value.energyCounterSource.length <= 256 ? value.energyCounterSource : null,
     limits: { minCurrentAmps: 6, maxCurrentAmps }, deviceLeaseSupported: false, automation: parseAutomation(value.automation),
   };
   return ageSnapshot(result, now);
