@@ -176,7 +176,7 @@ const estimates = createEstimateService({
     });
   },
   readSolarHistory: async date => (await history.historyReader.day(date)).solarEstimates,
-  readEnergyHistory: async date => (await history.historyReader.day(date)).energyEstimates,
+  readEnergyHistory: async date => (await history.readForecast(date))?.forecast.consumption?.quarterHourly ?? [],
   publishForecasts: history.publishForecasts,
   onError: () => console.error('Le bilan des estimations a échoué. Nouvelle tentative au prochain bilan.'),
 });

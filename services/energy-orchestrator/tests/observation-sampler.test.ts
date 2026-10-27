@@ -16,7 +16,7 @@ test('30-second readings stay volatile and targets retain only the latest raw sa
   sampler.record(sample(0, 1000, -5000, 10), instant(0));
   sampler.record(sample(30, 1200, -4800, 20), instant(30));
   sampler.record(sample(870, 2000, -4000, 60), instant(870));
-  assert.deepEqual(sampler.pending(), { battery: [], solar: [], household: [], householdIntervals: [],
+  assert.deepEqual(sampler.pending(), { battery: [], solar: [], household: [],
     state: { version: 1, finalizedThrough: iso(0), solar: null, household: null } });
   sampler.finalize(instant(900));
   const first = sampler.pending();

@@ -6,13 +6,10 @@ import { householdLearningSettings, householdModelVersion, predictHousehold, shi
 import type { createHouseholdWeather } from './household-weather.js';
 import { applyHouseholdFallback, loadHouseholdFallbackConfig, type HouseholdFallbackConfig } from './household-fallback.js';
 
-export interface HouseholdTrainingRun {
-  model: HouseholdModel; observations: HouseholdObservation[]; weather?: HouseholdWeather;
-}
 export interface HouseholdForecastArchive {
-  readObservations(start: Date, end: Date, availableAt: Date): Promise<HouseholdObservation[]>;
+  readObservations(start: Date, end: Date, finalizedThrough: Date): Promise<HouseholdObservation[]>;
   readModel(): Promise<HouseholdModel | null>;
-  saveTraining(run: HouseholdTrainingRun): Promise<void>;
+  saveModel(model: HouseholdModel): Promise<void>;
   saveForecasts(forecasts: HouseholdForecast[], weather?: HouseholdWeather): Promise<void>;
   readForecast(date: string): Promise<HouseholdForecast | null>;
 }
@@ -60,7 +57,7 @@ export function createHouseholdService(options: {
         const start = getCalendarDayBounds(new Date(`${shiftDate(getLocalDate(trainingAt), -householdLearningSettings.historyDays)}T00:00:00Z`)).start;
         const observations = await options.archive.readObservations(start, trainingAt, trainingAt);
         const candidate = trainHouseholdModel({ id: randomUUID(), at: trainingAt, observations, weather });
-        await options.archive.saveTraining({ model: candidate, observations, weather });
+        await options.archive.saveModel(candidate);
         model = candidate;
       }
       const weather = await options.weather.read('forecast');

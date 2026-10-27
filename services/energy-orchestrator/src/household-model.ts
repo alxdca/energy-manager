@@ -1,8 +1,7 @@
 import { getCalendarDayBounds, getLocalDate, timeZone } from './policy.js';
-import type { HouseholdInterval, ObservationPoint } from './observation-types.js';
-export type { HouseholdInterval } from './observation-types.js';
+import type { ObservationPoint } from './observation-types.js';
 
-export const householdModelVersion = 'household-profile-v1';
+export const householdModelVersion = 'household-profile-v2';
 export const householdLearningSettings = {
   historyDays: 84, halfLifeDays: 14, stepMinutes: 15,
   minimumCompleteDays: 14, minimumMatchingWeekdays: 4, weekdayFactor: 4,
@@ -16,13 +15,13 @@ const weekday = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay();
 const clockTime = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
-export interface HouseholdObservation extends ObservationPoint { interval?: HouseholdInterval }
+export type HouseholdObservation = ObservationPoint;
 export interface HouseholdWeather {
   kind: 'historical' | 'forecast'; source: 'Open-Meteo'; model: string;
   latitude: number; longitude: number; fetchedAt: string; availableAt: string; originalStepMinutes: 60;
   points: Array<{ at: string; temperatureC: number | null }>;
 }
-interface Sample { start: number; end: number; key: string; kwh: number; interval?: HouseholdInterval }
+interface Sample { start: number; end: number; key: string; kwh: number }
 interface Day { date: string; samples: Sample[]; complete: boolean }
 export interface ProfileSlot {
   kwh: number | null; observations: number; matchingWeekdays: number; weekdayFactor: 1 | 4; weekdayWeightShare: number | null;
@@ -62,11 +61,11 @@ export interface HouseholdForecast {
   fallback?: {
     windowHours: number; windowStart: string; windowEnd: string; minimumSamples: 4; samples: number; observedHours: number;
     averagePowerW: number | null; baselinePowerW: number; appliedSlots: number; source: 'recent_average' | 'configured_baseline' | null;
-    alignment: 'observed_intervals' | 'nominal_quarter_approximation' | 'mixed' | null;
+    alignment: 'nominal_quarter_approximation' | null;
   };
   weather: { status: string; calibration: WeatherCalibration | null; fetchedAt: string | null;
     model: string | null;
-    originalStepMinutes: 60 | null; alignment: 'linear_interpolation' | null; alignmentToleranceSeconds: 60;
+    originalStepMinutes: 60 | null; alignment: 'linear_interpolation' | null;
     validation: HouseholdModel['validation'] };
   updatedTotal: { measuredKwh: number; futureKwh: number | null; estimatedConsumptionKwh: number | null;
     status: 'approximate' | 'incomplete'; measuredThrough: string } | null;
@@ -86,9 +85,10 @@ function prepare(observations: HouseholdObservation[], at: Date): Day[] {
   const buckets = new Map<number, HouseholdObservation[]>();
   for (const point of observations) {
     const observed = Date.parse(point.at);
-    if (!finite(observed) || observed > at.getTime() || !finite(point.value) || point.value < 0
-      || point.interval && (!finite(Date.parse(point.interval.availableAt)) || Date.parse(point.interval.availableAt) > at.getTime())) continue;
+    if (!finite(observed) || observed > at.getTime() || !finite(point.value) || point.value < 0) continue;
     const start = Math.floor(observed / quarterMs) * quarterMs;
+    // Stored energy deltas represent fixed quarters; never learn from an unfinished quarter.
+    if (start + quarterMs > at.getTime()) continue;
     const bucket = buckets.get(start) ?? []; bucket.push(point); buckets.set(start, bucket);
   }
   const days = new Map<string, Day>();
@@ -96,7 +96,7 @@ function prepare(observations: HouseholdObservation[], at: Date): Day[] {
     if (points.length !== 1) continue; // Duplicates are ambiguous, even if their energy matches.
     const point = points[0], date = getLocalDate(new Date(start));
     const day = days.get(date) ?? { date, samples: [], complete: false };
-    day.samples.push({ start, end: start + quarterMs, key: clockTime.format(new Date(start)), kwh: point.value / 1000, interval: point.interval });
+    day.samples.push({ start, end: start + quarterMs, key: clockTime.format(new Date(start)), kwh: point.value / 1000 });
     days.set(date, day);
   }
   for (const day of days.values()) {
@@ -130,27 +130,15 @@ export function coldDegreeHours(weather: HouseholdWeather | undefined, start: nu
   }
   return cursor === end ? sum : null;
 }
-function aligned(s: Sample): boolean {
-  const x = s.interval;
-  if (!x || !x.source.trim() || x.at !== x.end) return false;
-  const a = Date.parse(x.start), b = Date.parse(x.end);
-  return finite(a) && finite(b) && b > a && b >= s.start && b < s.end
-    && Date.parse(x.nominalStart) === s.start && Date.parse(x.nominalEnd) === s.end
-    && s.start - a > 0 && s.start - a <= 60_000 && s.end - b > 0 && s.end - b <= 60_000;
-}
-function weatherCovered(day: Day): boolean {
-  return day.complete && day.samples.every((s, i) => aligned(s) && (i === 0
-    || s.interval!.start === day.samples[i - 1].interval!.end && s.interval!.source === day.samples[i - 1].interval!.source));
-}
 const degrees = (s: Sample, weather: HouseholdWeather, threshold: number) =>
-  coldDegreeHours(weather, Date.parse(s.interval!.start), Date.parse(s.interval!.end), threshold);
+  coldDegreeHours(weather, s.start, s.end, threshold);
 
 function profiles(days: Day[], reference: string, weather?: HouseholdWeather, calibration?: WeatherCalibration): Record<string, ProfileSlot> {
   const grouped = new Map<string, Array<{ date: string; kwh: number; heating: number }>>();
   for (const day of days) {
     const times = new Map<string, Array<{ kwh: number; heating: number }>>();
     for (const sample of day.samples) {
-      const g = calibration ? aligned(sample) ? degrees(sample, weather!, calibration.balancePointC) : null : 0;
+      const g = calibration ? degrees(sample, weather!, calibration.balancePointC) : 0;
       if (g === null) continue;
       const values = times.get(sample.key) ?? [];
       values.push({ kwh: sample.kwh, heating: (calibration?.slopeKwPerC ?? 0) * g }); times.set(sample.key, values);
@@ -183,7 +171,7 @@ function profiles(days: Day[], reference: string, weather?: HouseholdWeather, ca
 }
 function fit(days: Day[], weather: HouseholdWeather, threshold: number): WeatherCalibration | null {
   const rows = days.map(day => {
-    const start = Date.parse(day.samples[0].interval!.start), end = Date.parse(day.samples.at(-1)!.interval!.end);
+    const start = day.samples[0].start, end = day.samples.at(-1)!.end;
     const hours = (end - start) / hourMs;
     const g = coldDegreeHours(weather, start, end, threshold), t = coldDegreeHours(weather, start, end, 100);
     return g === null || t === null ? null : { x: g / hours, temperature: 100 - t / hours,
@@ -228,12 +216,12 @@ function score(training: Day[], testing: Day[], weather: HouseholdWeather, calib
 }
 function learnWeather(days: Day[], weather?: HouseholdWeather): { calibration: WeatherCalibration | null; status: HouseholdModel['weatherStatus']; days: number } {
   if (!weather) return { calibration: null, status: 'unavailable', days: 0 };
-  const eligible = days.filter(d => weatherCovered(d) && d.samples.every(s => degrees(s, weather, 100) !== null));
+  const eligible = days.filter(d => d.complete && d.samples.every(s => degrees(s, weather, 100) !== null));
   // 28 calibration days plus separate seven-day selection and final diagnostic holdouts.
   if (eligible.length < householdLearningSettings.minimumWeatherDays) return { calibration: null, status: 'insufficient_history', days: eligible.length };
   const training = eligible.slice(0, -14), selection = eligible.slice(-14, -7), holdout = eligible.slice(-7);
   const temperatures = training.map(d => {
-    const a = Date.parse(d.samples[0].interval!.start), b = Date.parse(d.samples.at(-1)!.interval!.end);
+    const a = d.samples[0].start, b = d.samples.at(-1)!.end;
     return 100 - coldDegreeHours(weather, a, b, 100)! / ((b - a) / hourMs);
   }).sort((a, b) => a - b);
   const candidates = [...new Set(Array.from({ length: 9 }, (_, i) => temperatures[Math.floor((temperatures.length - 1) * (i + 1) / 10)]))]
@@ -326,5 +314,5 @@ export function predictHousehold(input: { date: string; at: Date; model: Househo
       estimatedConsumptionKwh: sum(slots.slice(i * 4, i * 4 + 4)) })),
     training: valid ? model.training : null,
     weather: { status: weatherStatus, calibration, fetchedAt: weather?.fetchedAt ?? null, model: weather?.model ?? null, originalStepMinutes: weather ? 60 : null,
-      alignment: weather ? 'linear_interpolation' : null, alignmentToleranceSeconds: 60, validation: valid ? model.validation : null }, updatedTotal };
+      alignment: weather ? 'linear_interpolation' : null, validation: valid ? model.validation : null }, updatedTotal };
 }

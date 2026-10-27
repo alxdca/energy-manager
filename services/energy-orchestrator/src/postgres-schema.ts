@@ -1,3 +1,5 @@
+import { householdModelVersion } from './household-model.js';
+
 /** Finalized observations retain their actual sampled time and one fixed-unit value. */
 export const postgresSchema = `
 CREATE SCHEMA IF NOT EXISTS energy_history;
@@ -7,30 +9,21 @@ CREATE TABLE IF NOT EXISTS energy_history.${channel}_observations (
   observed_at timestamptz PRIMARY KEY CHECK (isfinite(observed_at)),
   value double precision NOT NULL CHECK (value >= 0 AND value < 'Infinity'::double precision${channel === 'battery' ? ' AND value <= 100' : ''})
 );`).join('\n')}
-CREATE TABLE IF NOT EXISTS energy_history.battery_estimates (
+CREATE TABLE IF NOT EXISTS energy_history.battery_forecasts (
   target_at timestamptz PRIMARY KEY CHECK (isfinite(target_at) AND EXTRACT(EPOCH FROM target_at) % 900 = 0),
   soc_percent double precision NOT NULL CHECK (soc_percent >= 0 AND soc_percent <= 100)
 );
 ${(['house', 'solar'] as const).map(channel => `
-CREATE TABLE IF NOT EXISTS energy_history.${channel}_estimates (
+CREATE TABLE IF NOT EXISTS energy_history.${channel}_forecasts (
   interval_start timestamptz PRIMARY KEY CHECK (isfinite(interval_start) AND EXTRACT(EPOCH FROM interval_start) % 900 = 0),
   energy_kwh double precision NOT NULL CHECK (energy_kwh >= 0 AND energy_kwh < 'Infinity'::double precision)
 );`).join('\n')}
-INSERT INTO energy_history.metadata (key, value) VALUES ('schema_version', '6'::jsonb)
+INSERT INTO energy_history.metadata (key, value) VALUES ('schema_version', '9'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 `;
 
 /** Additive v6 → v7 migration. Existing observations and estimates are preserved verbatim. */
 export const householdForecastMigration = `
-CREATE TABLE IF NOT EXISTS energy_history.house_intervals (
-  observed_at timestamptz PRIMARY KEY REFERENCES energy_history.house_observations(observed_at),
-  interval_start timestamptz NOT NULL CHECK (isfinite(interval_start)),
-  interval_end timestamptz NOT NULL CHECK (isfinite(interval_end) AND interval_end > interval_start),
-  nominal_start timestamptz NOT NULL,
-  nominal_end timestamptz NOT NULL CHECK (nominal_end - nominal_start = interval '15 minutes'),
-  source text NOT NULL CHECK (length(source) > 0),
-  available_at timestamptz NOT NULL CHECK (isfinite(available_at) AND available_at >= interval_end)
-);
 CREATE TABLE IF NOT EXISTS energy_history.household_weather (
   id text PRIMARY KEY,
   kind text NOT NULL CHECK (kind IN ('historical', 'forecast')),
@@ -41,23 +34,44 @@ CREATE TABLE IF NOT EXISTS energy_history.household_weather (
   input jsonb NOT NULL
 );
 CREATE INDEX IF NOT EXISTS household_weather_lookup ON energy_history.household_weather (kind, fetched_at DESC);
-CREATE TABLE IF NOT EXISTS energy_history.household_training (
-  id uuid PRIMARY KEY,
-  trained_at timestamptz NOT NULL CHECK (isfinite(trained_at)),
-  model jsonb NOT NULL,
-  inputs jsonb NOT NULL
-);
-CREATE INDEX IF NOT EXISTS household_training_latest ON energy_history.household_training (trained_at DESC);
-CREATE TABLE IF NOT EXISTS energy_history.household_forecasts (
-  issued_at timestamptz NOT NULL CHECK (isfinite(issued_at)),
-  target_date date NOT NULL,
-  model_version text NOT NULL,
-  scope text NOT NULL CHECK (scope = 'household_total'),
-  model_id uuid REFERENCES energy_history.household_training(id),
-  forecast jsonb NOT NULL,
-  inputs jsonb NOT NULL,
-  PRIMARY KEY (issued_at, target_date, model_version, scope)
-);
-CREATE INDEX IF NOT EXISTS household_forecasts_latest ON energy_history.household_forecasts (target_date, issued_at DESC);
-UPDATE energy_history.metadata SET value = '7'::jsonb WHERE key = 'schema_version';
+`;
+
+/** v6/v7 → v8: rename in place before creating current tables, retaining rows and constraints. */
+export const forecastTableRenameMigration = `
+DO $migration$
+BEGIN
+${(['battery', 'house', 'solar'] as const).map(channel => `
+  IF to_regclass('energy_history.${channel}_estimates') IS NOT NULL THEN
+    IF to_regclass('energy_history.${channel}_forecasts') IS NOT NULL THEN
+      RAISE EXCEPTION 'Conflit de schéma PostgreSQL : ${channel}_estimates et ${channel}_forecasts existent ensemble.';
+    END IF;
+    ALTER TABLE energy_history.${channel}_estimates RENAME TO ${channel}_forecasts;
+  END IF;`).join('\n')}
+END;
+$migration$;
+UPDATE energy_history.metadata SET value = '8'::jsonb WHERE key = 'schema_version';
+`;
+
+/** v8 → v9: retain the latest compatible model and remove the unused training/input archive. */
+export const householdModelMetadataMigration = `
+DO $migration$
+DECLARE legacy_foreign_key record;
+BEGIN
+  IF to_regclass('energy_history.household_training') IS NOT NULL THEN
+    INSERT INTO energy_history.metadata (key, value)
+      SELECT 'household_model_v1', model FROM energy_history.household_training
+      WHERE model->>'version' = '${householdModelVersion}' ORDER BY trained_at DESC, id DESC LIMIT 1
+      ON CONFLICT (key) DO NOTHING;
+    -- The retired forecast archive can retain its rows without a reference to training runs.
+    FOR legacy_foreign_key IN SELECT conname FROM pg_constraint
+      WHERE contype = 'f' AND conrelid = to_regclass('energy_history.household_forecasts')
+        AND confrelid = 'energy_history.household_training'::regclass
+    LOOP
+      EXECUTE format('ALTER TABLE energy_history.household_forecasts DROP CONSTRAINT %I', legacy_foreign_key.conname);
+    END LOOP;
+    DROP TABLE energy_history.household_training;
+  END IF;
+END;
+$migration$;
+UPDATE energy_history.metadata SET value = '9'::jsonb WHERE key = 'schema_version';
 `;

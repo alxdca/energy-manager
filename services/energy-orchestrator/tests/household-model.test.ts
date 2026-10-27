@@ -6,13 +6,10 @@ import { coldDegreeHours, householdDaySlots, predictHousehold, shiftDate, trainH
 const at = new Date('2026-10-27T11:00:00Z');
 const near = (actual: number | null, expected: number, tolerance = 1e-8) => assert.ok(actual !== null
   && Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
-function history(today: string, count: number, energy: (date: string, index: number) => number = () => .25, intervals = false): HouseholdObservation[] {
+function history(today: string, count: number, energy: (date: string, index: number) => number = () => .25): HouseholdObservation[] {
   return Array.from({ length: count }, (_, i) => shiftDate(today, i - count)).flatMap(date => householdDaySlots(date).map((slot, i) => {
     const end = new Date(Date.parse(slot.end) - 30_000).toISOString();
-    return { at: end, value: energy(date, i) * 1000, ...(intervals ? { interval: {
-      at: end, start: new Date(Date.parse(slot.start) - 30_000).toISOString(), end,
-      nominalStart: slot.start, nominalEnd: slot.end, source: 'house-meter', availableAt: slot.end,
-    } } : {}) };
+    return { at: end, value: energy(date, i) * 1000 };
   }));
 }
 function weather(start: string, hours: number, temperature: (hour: number) => number, kind: 'historical' | 'forecast' = 'historical'): HouseholdWeather {
@@ -65,15 +62,16 @@ test('today contributes to training while duplicate slots, future data and older
 });
 
 test('elapsed readings from today update matching slots without completing or extrapolating the day', () => {
-  const today = history('2026-10-28', 1, () => .5, true)
-    .filter(p => Date.parse(p.interval!.availableAt) <= at.getTime());
-  const late = { ...today[1], interval: { ...today[1].interval!, availableAt: '2026-10-27T11:00:01Z' } };
-  const observations = [...history('2026-10-27', 1), ...today, late];
-  const model = trainHouseholdModel({ id: 'partial-today', at, observations });
+  const today = history('2026-10-28', 1, () => .5)
+    .filter(p => Math.floor(Date.parse(p.at) / 900_000) * 900_000 + 900_000 <= at.getTime());
+  const active = { at: '2026-10-27T11:04:30Z', value: 999999 };
+  const trainingAt = new Date('2026-10-27T11:05:00Z');
+  const observations = [...history('2026-10-27', 1), ...today, active];
+  const model = trainHouseholdModel({ id: 'partial-today', at: trainingAt, observations });
   assert.equal(today.length, 48);
   assert.equal(model.training.observations, 144);
   assert.equal(model.training.completeSamplingDays, 1);
-  const forecast = predictHousehold({ date: '2026-10-28', at, model });
+  const forecast = predictHousehold({ date: '2026-10-28', at: trainingAt, model });
   const weight = 2 ** (-1 / 14);
   near(forecast.slots[0].estimatedConsumptionKwh, (.5 + .25 * weight) / (1 + weight));
   assert.equal(forecast.slots[0].observations, 2);
@@ -126,18 +124,26 @@ test('temperature integration handles threshold crossings, missing values and no
   assert.equal(coldDegreeHours(input, Date.parse(input.points[0].at), Date.parse(input.points[1].at), 10), null);
 });
 
-test('complete sampling without observed interval boundaries cannot calibrate heating', () => {
+test('weather eligibility uses fixed quarters from plain observations and excludes days with gaps or missing weather', () => {
   const input = weather('2026-08-01T00:00:00Z', 90 * 24, i => 10 + 10 * Math.sin(i / 80));
-  const model = trainHouseholdModel({ id: 'test', at, observations: history('2026-10-27', 56), weather: input });
-  assert.equal(model.training.completeSamplingDays, 56); assert.equal(model.training.weatherDays, 0);
+  const observations = history('2026-10-27', 28);
+  const model = trainHouseholdModel({ id: 'test', at, observations, weather: input });
+  assert.equal(model.training.completeSamplingDays, 28); assert.equal(model.training.weatherDays, 28);
   assert.equal(model.calibration, null); assert.equal(model.weatherStatus, 'insufficient_history');
+  const gapped = trainHouseholdModel({ id: 'gapped', at, observations: observations.slice(1), weather: input });
+  assert.equal(gapped.training.completeSamplingDays, 27); assert.equal(gapped.training.weatherDays, 27);
+  input.points.find(p => p.at === '2026-10-26T10:00:00.000Z')!.temperatureC = null;
+  const missingWeather = trainHouseholdModel({ id: 'missing-weather', at, observations, weather: input });
+  assert.equal(missingWeather.training.completeSamplingDays, 28); assert.equal(missingWeather.training.weatherDays, 27);
 });
 
 test('learned weather correction removes historical heating before adding future heating', () => {
   const input = weather('2026-08-01T00:00:00Z', 90 * 24, i => 14 + 12 * Math.sin(i / 41) + 2 * Math.cos(i / 13));
-  const observations = history('2026-10-27', 70, () => .2, true);
-  for (const observation of observations) observation.value += .12 * coldDegreeHours(input,
-    Date.parse(observation.interval!.start), Date.parse(observation.interval!.end), 15)! * 1000;
+  const observations = history('2026-10-27', 70, () => .2);
+  for (const observation of observations) {
+    const start = Math.floor(Date.parse(observation.at) / 900_000) * 900_000;
+    observation.value += .12 * coldDegreeHours(input, start, start + 900_000, 15)! * 1000;
+  }
   const model = trainHouseholdModel({ id: 'weather', at, observations, weather: input });
   assert.equal(model.weatherStatus, 'calibrated'); assert.ok(model.calibration);
   near(model.calibration.slopeKwPerC, .12, .03); near(model.calibration.balancePointC, 15, 3);
@@ -152,7 +158,7 @@ test('learned weather correction removes historical heating before adding future
 
 test('constant temperatures, unavailable weather and expired models never invent coefficients or baseline energy', () => {
   const input = weather('2026-08-01T00:00:00Z', 90 * 24, () => 5);
-  const model = trainHouseholdModel({ id: 'constant', at, observations: history('2026-10-27', 60, () => .3, true), weather: input });
+  const model = trainHouseholdModel({ id: 'constant', at, observations: history('2026-10-27', 60, () => .3), weather: input });
   assert.equal(model.calibration, null); assert.equal(model.weatherStatus, 'not_identifiable');
   near(predictHousehold({ date: '2026-10-28', at, model }).estimatedConsumptionKwh, 28.8);
   const expired = predictHousehold({ date: '2026-10-28', at: new Date('2026-10-28T08:00:00Z'), model });

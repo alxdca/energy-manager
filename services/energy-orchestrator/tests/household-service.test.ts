@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHouseholdService, type HouseholdTrainingRun } from '../src/household-service.js';
+import { createHouseholdService } from '../src/household-service.js';
 import { householdDaySlots, shiftDate, type HouseholdForecast, type HouseholdModel, type HouseholdObservation } from '../src/household-model.js';
 import { createHouseholdWeather } from '../src/household-weather.js';
 import { createApi } from '../src/api.js';
@@ -10,7 +10,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 function fixture(initialModel: HouseholdModel | null = null) {
   let at = new Date('2026-10-27T11:00:00Z');
   let saved = initialModel, failRead = false, trainingGate: ReturnType<typeof deferred> | undefined;
-  const models: HouseholdTrainingRun[] = [], forecasts = new Map<string, HouseholdForecast>();
+  const models: HouseholdModel[] = [], forecasts = new Map<string, HouseholdForecast>();
   const observations: HouseholdObservation[] = householdDaySlots('2026-10-26').map(s => ({ at: new Date(Date.parse(s.end) - 30000).toISOString(), value: 250 }));
   let reads = 0, finalized = 0, weatherReads = 0;
   const service = createHouseholdService({ now: () => new Date(at),
@@ -20,7 +20,7 @@ function fixture(initialModel: HouseholdModel | null = null) {
       async readObservations(start, end) { reads++; if (failRead) throw new Error('database offline');
         return observations.filter(p => Date.parse(p.at) >= start.getTime() && Date.parse(p.at) < end.getTime()); },
       async readModel() { return saved; },
-      async saveTraining(run) { await trainingGate?.promise; models.push(structuredClone(run)); saved = structuredClone(run.model); },
+      async saveModel(model) { await trainingGate?.promise; models.push(structuredClone(model)); saved = structuredClone(model); },
       async saveForecasts(values) { for (const value of values) forecasts.set(value.date, structuredClone(value)); },
       async readForecast(date) { return structuredClone(forecasts.get(date) ?? null); },
     },
@@ -51,7 +51,7 @@ test('manual learning incorporates today’s available household readings into t
   f.observations.push({ at: '2026-10-27T07:14:30Z', value: 1000 },
     { at: '2026-10-27T11:15:30Z', value: 999999 });
   await f.service.train();
-  const trained = f.models.at(-1)!.model;
+  const trained = f.models.at(-1)!;
   assert.equal(trained.training.to, '2026-10-27');
   assert.equal(trained.training.observations, 97);
   assert.equal(trained.training.completeSamplingDays, 1);
@@ -63,13 +63,23 @@ test('manual learning incorporates today’s available household readings into t
 
 test('saved models from before current-day learning rebuild once, then reuse the updated model', async () => {
   const original = fixture(); await original.service.refresh();
-  const legacy = structuredClone(original.models[0].model);
+  const legacy = structuredClone(original.models[0]);
   legacy.training.to = '2026-10-26';
   const upgraded = fixture(legacy); await upgraded.service.refresh(); await upgraded.service.refresh();
   assert.equal(upgraded.models.length, 1);
-  assert.equal(upgraded.models[0].model.training.to, '2026-10-27');
-  const restarted = fixture(upgraded.models[0].model); await restarted.service.refresh();
+  assert.equal(upgraded.models[0].training.to, '2026-10-27');
+  const restarted = fixture(upgraded.models[0]); await restarted.service.refresh();
   assert.equal(restarted.models.length, 0);
+});
+
+test('models trained with measured interval metadata rebuild once using fixed quarters', async () => {
+  const original = fixture(); await original.service.refresh();
+  const legacy = structuredClone(original.models[0]);
+  Object.assign(legacy, { version: 'household-profile-v1' });
+  const upgraded = fixture(legacy); await upgraded.service.refresh(); await upgraded.service.refresh();
+  assert.equal(upgraded.models.length, 1);
+  assert.equal(upgraded.models[0].version, 'household-profile-v2');
+  assert.notEqual(upgraded.models[0].id, legacy.id);
 });
 
 test('training freezes its cutoff after weather and finalization, including across Zurich midnight and slow history I/O', async () => {
@@ -77,7 +87,7 @@ test('training freezes its cutoff after weather and finalization, including acro
   const cutoff = '2026-10-27T23:15:00.000Z';
   const observations = [{ at: '2026-10-27T22:59:30Z', value: 250 },
     { at: '2026-10-27T23:14:30Z', value: 500 }, { at: '2026-10-27T23:29:30Z', value: 999999 }];
-  const models: HouseholdTrainingRun[] = [];
+  const models: HouseholdModel[] = [];
   const reads: Array<{ start: string; end: string; availableAt: string }> = [];
   const service = createHouseholdService({ now: () => new Date(clock),
     finalizeMeasurements: async () => {
@@ -97,19 +107,18 @@ test('training freezes its cutoff after weather and finalization, including acro
         clock = new Date('2026-10-27T23:30:00Z');
         return observations.filter(p => Date.parse(p.at) >= start.getTime() && Date.parse(p.at) < end.getTime());
       },
-      async saveTraining(run) { models.push(run); }, async saveForecasts() {}, async readForecast() { return null; },
+      async saveModel(model) { models.push(model); }, async saveForecasts() {}, async readForecast() { return null; },
     },
   });
   await service.train();
   assert.equal(reads[0].end, cutoff); assert.equal(reads[0].availableAt, cutoff);
   assert.equal(reads[0].start, '2026-08-04T22:00:00.000Z');
-  assert.equal(models[0].model.trainedAt, cutoff);
-  assert.equal(models[0].model.trainingDate, '2026-10-28');
-  assert.equal(models[0].model.training.to, '2026-10-28');
-  assert.equal(models[0].model.training.observations, 2);
-  assert.equal(models[0].model.weatherStatus, 'insufficient_history');
-  assert.deepEqual(models[0].model.weatherLocation, { latitude: 47, longitude: 8 });
-  assert.deepEqual(models[0].observations, observations.slice(0, 2));
+  assert.equal(models[0].trainedAt, cutoff);
+  assert.equal(models[0].trainingDate, '2026-10-28');
+  assert.equal(models[0].training.to, '2026-10-28');
+  assert.equal(models[0].training.observations, 2);
+  assert.equal(models[0].weatherStatus, 'insufficient_history');
+  assert.deepEqual(models[0].weatherLocation, { latitude: 47, longitude: 8 });
 });
 
 test('manual full training reloads history and recalculates today plus the next two days immediately', async () => {
@@ -175,7 +184,7 @@ test('household API GETs only read; POST starts full training asynchronously and
   assert.equal(status.settings.historyDays, 84);
   assert.deepEqual(status.settings.fallback, { baselinePowerW: 800, windowHours: 24 });
   assert.equal(status.training.observations, 96);
-  assert.equal(status.modelVersion, f.models[0].model.version);
+  assert.equal(status.modelVersion, f.models[0].version);
   assert.equal(status.calibration, null);
   assert.equal((await api.request('/api/household/forecast?date=2026-10-28')).status, 200);
   assert.equal((await api.request('/api/household/forecast?date=2026-02-30')).status, 400);

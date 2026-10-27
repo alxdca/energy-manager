@@ -4,13 +4,13 @@ import type { BatteryHistorySummary } from './battery-history.js';
 import type { BatteryProjection } from './battery-projection.js';
 import type { ForecastBatch, PublishedForecast } from './forecast-publication.js';
 import type { ConsumptionForecast } from './consumption.js';
-import { consumptionIntervals } from './consumption.js';
+import { consumptionIntervals, estimateConsumption } from './consumption.js';
 import type { CarChargingForecast } from './car-types.js';
 import { getCalendarDayBounds, getLocalDate, timeZone } from './policy.js';
 import type { Telemetry } from './status.js';
 import type { AsyncDailyEnergyReader, HistoryReader } from './history-reader.js';
-import { postgresSchema, householdForecastMigration } from './postgres-schema.js';
-import { createHouseholdArchive, readHouseholdPredictionHistory, writeHouseholdIntervals } from './household-postgres.js';
+import { postgresSchema, householdForecastMigration, forecastTableRenameMigration, householdModelMetadataMigration } from './postgres-schema.js';
+import { createHouseholdArchive, householdForecastKey, type HouseholdPublication } from './household-postgres.js';
 import { createBatteryOrigin } from './battery-origin.js';
 import { hasUsableForecast, type SolarForecast } from './forecast.js';
 import { energyEstimatePoints, solarEstimatePoints, type EnergyEstimatePoint, type SolarEstimatePoint } from './energy-estimate-history.js';
@@ -40,6 +40,7 @@ interface ForecastMetadata {
 }
 interface SavedEstimates {
   metadata: ForecastMetadata | null;
+  household: HouseholdPublication | null;
   battery: Array<{ at: string; socPercent: number }>;
   solar: SolarEstimatePoint[];
   house: EnergyEstimatePoint[];
@@ -127,9 +128,11 @@ export async function createPostgresHistory(options: { connectionString: string;
         CREATE TABLE IF NOT EXISTS energy_history.metadata (key text PRIMARY KEY, value jsonb NOT NULL)`);
       const version = await client.query('SELECT value FROM energy_history.metadata WHERE key = $1', ['schema_version']);
       const currentVersion = version.rows[0]?.value;
-      if (currentVersion !== undefined && currentVersion !== 6 && currentVersion !== 7) throw new Error('Version de schéma PostgreSQL non prise en charge.');
+      if (currentVersion !== undefined && currentVersion !== 6 && currentVersion !== 7 && currentVersion !== 8 && currentVersion !== 9) throw new Error('Version de schéma PostgreSQL non prise en charge.');
+      if (currentVersion !== 8 && currentVersion !== 9) await client.query(forecastTableRenameMigration);
       await client.query(postgresSchema);
-      if (currentVersion !== 7) await client.query(householdForecastMigration);
+      if (currentVersion === undefined || currentVersion === 6) await client.query(householdForecastMigration);
+      if (currentVersion !== 9) await client.query(householdModelMetadataMigration);
       await client.query(`INSERT INTO energy_history.metadata (key, value) VALUES ($1, $2::jsonb)
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, ['writer_identity', JSON.stringify(writerIdentity)]);
     });
@@ -193,7 +196,6 @@ export async function createPostgresHistory(options: { connectionString: string;
           await writePoints(client, 'battery', snapshot.battery);
           await writePoints(client, 'solar', snapshot.solar);
           await writePoints(client, 'house', snapshot.household);
-          await writeHouseholdIntervals(client, snapshot.householdIntervals);
           if (checkpoint !== savedObservationState) await writeMetadata(client, observationCheckpointKey, checkpoint);
           if (origin !== savedOriginState) await writeMetadata(client, originCheckpointKey, origin);
         });
@@ -262,21 +264,27 @@ export async function createPostgresHistory(options: { connectionString: string;
     const { start, end } = dayBounds(date);
     const result = await pool.query<{
       metadata: ForecastMetadata | null;
+      household: HouseholdPublication | null;
       battery: Array<{ at: string; socPercent: number }>;
       solar: Array<{ start: string; estimatedProductionKwh: number }>;
       house: Array<{ start: string; estimatedConsumptionKwh: number }>;
     }>(`SELECT (SELECT value FROM energy_history.metadata WHERE key = $3) AS metadata,
+      (SELECT value FROM energy_history.metadata WHERE key = $4) AS household,
       COALESCE((SELECT json_agg(json_build_object('at', target_at, 'socPercent', soc_percent) ORDER BY target_at)
-        FROM energy_history.battery_estimates WHERE target_at >= $1 AND target_at <= $2), '[]'::json) AS battery,
+        FROM energy_history.battery_forecasts WHERE target_at >= $1 AND target_at <= $2), '[]'::json) AS battery,
       COALESCE((SELECT json_agg(json_build_object('start', interval_start, 'estimatedProductionKwh', energy_kwh) ORDER BY interval_start)
-        FROM energy_history.solar_estimates WHERE interval_start >= $1 AND interval_start < $2), '[]'::json) AS solar,
+        FROM energy_history.solar_forecasts WHERE interval_start >= $1 AND interval_start < $2), '[]'::json) AS solar,
       COALESCE((SELECT json_agg(json_build_object('start', interval_start, 'estimatedConsumptionKwh', energy_kwh) ORDER BY interval_start)
-        FROM energy_history.house_estimates WHERE interval_start >= $1 AND interval_start < $2), '[]'::json) AS house`, [start, end, forecastBatchKey]);
+        FROM energy_history.house_forecasts WHERE interval_start >= $1 AND interval_start < $2), '[]'::json) AS house`, [start, end, forecastBatchKey, householdForecastKey]);
     const row = result.rows[0];
     const interval = <T extends { start: string }>(point: T) => ({ ...point,
       start: new Date(point.start).toISOString(), end: new Date(Date.parse(point.start) + bucketMs).toISOString() });
-    return { metadata: row.metadata, battery: row.battery.map(point => ({ ...point, at: new Date(point.at).toISOString() })),
-      solar: row.solar.map(interval), house: row.house.map(interval) };
+    const sources = new Map(row.household?.forecasts.find(forecast => forecast.date === date)?.slots.map(slot => [slot.start, slot.source]));
+    return { metadata: row.metadata, household: row.household, battery: row.battery.map(point => ({ ...point, at: new Date(point.at).toISOString() })),
+      solar: row.solar.map(interval), house: row.house.map(point => {
+        const value = interval(point), source = sources.get(value.start);
+        return { ...value, ...(source ? { source } : {}) };
+      }) };
   }
 
   async function publishForecasts(input: ForecastBatch): Promise<void> {
@@ -313,18 +321,19 @@ export async function createPostgresHistory(options: { connectionString: string;
     await transaction(async client => {
       const previous = await client.query<{ value: ForecastMetadata }>('SELECT value FROM energy_history.metadata WHERE key = $1', [forecastBatchKey]);
       if (Date.parse(previous.rows[0]?.value.calculatedAt ?? '') > cutoff) throw new Error('Le bilan est antérieur aux estimations déjà enregistrées.');
+      const household = await client.query('SELECT 1 FROM energy_history.metadata WHERE key = $1', [householdForecastKey]);
       // The active quarter is immutable once it starts. Replace only later targets;
       // ON CONFLICT below still lets a first-ever batch fill a missing active quarter.
       const horizon = new Date((Math.floor(cutoff / bucketMs) + 1) * bucketMs);
-      await client.query('DELETE FROM energy_history.solar_estimates WHERE interval_start >= $1', [horizon]);
-      await client.query('DELETE FROM energy_history.house_estimates WHERE interval_start >= $1', [horizon]);
-      await client.query('DELETE FROM energy_history.battery_estimates WHERE target_at > $1', [at]);
+      await client.query('DELETE FROM energy_history.solar_forecasts WHERE interval_start >= $1', [horizon]);
+      if (!household.rowCount) await client.query('DELETE FROM energy_history.house_forecasts WHERE interval_start >= $1', [horizon]);
+      await client.query('DELETE FROM energy_history.battery_forecasts WHERE target_at > $1', [at]);
       for (const [table, points, field] of [
-        ['solar_estimates', solar, 'estimatedProductionKwh'], ['house_estimates', house, 'estimatedConsumptionKwh'],
-      ] as const) if (points.length) await client.query(`INSERT INTO energy_history.${table} (interval_start, energy_kwh)
+        ['solar_forecasts', solar, 'estimatedProductionKwh'], ['house_forecasts', house, 'estimatedConsumptionKwh'],
+      ] as const) if (points.length && (table !== 'house_forecasts' || !household.rowCount)) await client.query(`INSERT INTO energy_history.${table} (interval_start, energy_kwh)
         SELECT x.start::timestamptz, x."${field}" FROM jsonb_to_recordset($1::jsonb) AS x(start text, "${field}" double precision)
         ON CONFLICT (interval_start) DO NOTHING`, [JSON.stringify(points)]);
-      if (battery.length) await client.query(`INSERT INTO energy_history.battery_estimates (target_at, soc_percent)
+      if (battery.length) await client.query(`INSERT INTO energy_history.battery_forecasts (target_at, soc_percent)
         SELECT x.at::timestamptz, x."socPercent" FROM jsonb_to_recordset($1::jsonb) AS x(at text, "socPercent" double precision)`, [JSON.stringify(battery)]);
       await writeMetadata(client, forecastBatchKey, JSON.stringify(metadata));
     });
@@ -341,7 +350,11 @@ export async function createPostgresHistory(options: { connectionString: string;
     // beginning at the active quarter.
     const from = Math.min(end.getTime(), Math.max(start.getTime(), Math.floor(cutoff / 3_600_000) * 3_600_000));
     const inHorizon = (point: { start: string }) => Date.parse(point.start) >= from;
-    const solar = saved.solar.filter(inHorizon), house = saved.house.filter(inHorizon)
+    // Learned estimates include car loads. Reconstruct the controller's car-free baseline
+    // from its saved configuration instead of feeding the household series into planning.
+    const baseline = saved.household && context.consumption
+      ? estimateConsumption(date, { baselinePowerW: context.consumption.baselinePowerW }).quarterHourly : saved.house;
+    const solar = saved.solar.filter(inHorizon), house = baseline.filter(inHorizon)
       .map(point => ({ ...point, estimatedConsumptionKwh: point.estimatedConsumptionKwh! }));
     const complete = (points: Array<{ start: string; end: string }>) => points.length === (end.getTime() - from) / bucketMs
       && points.every((point, index) => Date.parse(point.start) === from + index * bucketMs && Date.parse(point.end) === from + (index + 1) * bucketMs);
@@ -366,8 +379,8 @@ export async function createPostgresHistory(options: { connectionString: string;
   const historyReader: HistoryReader = {
     async day(date, now = clock()) {
       const { start, end } = dayBounds(date);
-      const [energy, observed, saved, householdPredictions] = await Promise.all([
-        energyDay(date, now), batteryHistory.summary(date, now), savedEstimates(date), readHouseholdPredictionHistory(pool, date, now),
+      const [energy, observed, saved] = await Promise.all([
+        energyDay(date, now), batteryHistory.summary(date, now), savedEstimates(date),
       ]);
       const solar = saved.metadata?.forecasts.find(value => value.date === date)?.solar;
       return { date, timeZone, periodStart: start.toISOString(), periodEnd: end.toISOString(),
@@ -376,7 +389,7 @@ export async function createPostgresHistory(options: { connectionString: string;
           projection: saved.metadata?.projection ?? { status: 'unavailable', reason: 'awaiting_evaluation', assumption: 'automatic_planning' } },
         observations: { method: 'counter_differences' as const, solar: energy.solar, household: energy.household },
         solarEstimates: saved.solar, energyEstimates: saved.house,
-        householdPredictions, ...(solar ? { solarForecast: { status: solar.status, error: solar.error,
+        householdPredictions: saved.house, ...(solar ? { solarForecast: { status: solar.status, error: solar.error,
           fetchedAt: solar.fetchedAt, weatherModel: solar.weatherModel } } : {}) };
     },
   };

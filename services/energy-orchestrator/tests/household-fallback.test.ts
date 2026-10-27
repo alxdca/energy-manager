@@ -56,20 +56,14 @@ test('only missing slots are filled; learned zeroes, training profiles and coeff
   assert.equal(prediction.slots.filter(s => s.estimatedConsumptionKwh === null).length, 94);
 });
 
-test('averaging uses observed interval durations and excludes unavailable or incompatible interval metadata', () => {
-  const samples = readings().map((p, i) => {
-    const end = Date.parse(p.at), nominalEnd = Math.ceil(end / 900000) * 900000;
-    return { ...p, interval: { at: p.at, start: new Date(end - 900000 + (i === 0 ? 20000 : 0)).toISOString(), end: p.at,
-      nominalStart: new Date(nominalEnd - 900000).toISOString(), nominalEnd: new Date(nominalEnd).toISOString(),
-      source: 'meter', availableAt: new Date(nominalEnd).toISOString() } };
-  });
+test('each observation contributes exactly fifteen minutes despite timestamp jitter and missing quarters', () => {
+  const samples = readings();
+  samples[0].at = '2026-10-27T10:59:50Z';
+  samples[3].at = '2026-10-27T08:14:00Z';
   const result = applyHouseholdFallback(empty(), samples, config);
-  near(result.fallback!.averagePowerW, 2 / (1 - 20000 / 3600000) * 1000);
-  assert.equal(result.fallback!.alignment, 'observed_intervals');
-  samples[0].interval.availableAt = '2026-10-27T12:00:00Z';
-  assert.equal(applyHouseholdFallback(empty(), samples, config).source, 'configured_baseline');
-  samples[0].interval.availableAt = at.toISOString(); samples[0].interval.source = '';
-  assert.equal(applyHouseholdFallback(empty(), samples, config).source, 'configured_baseline');
+  near(result.fallback!.observedHours, 1);
+  near(result.fallback!.averagePowerW, 2000);
+  assert.equal(result.fallback!.alignment, 'nominal_quarter_approximation');
 });
 
 test('fallback totals preserve 23/24/25-hour days and use kW × interval duration', () => {

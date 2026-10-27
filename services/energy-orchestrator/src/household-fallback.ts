@@ -23,29 +23,17 @@ export function applyHouseholdFallback(forecast: HouseholdForecast, observations
   const buckets = new Map<number, HouseholdObservation[]>();
   for (const point of observations) {
     const observed = Date.parse(point.at);
-    if (!finite(observed) || observed < start || observed > at || !finite(point.value) || point.value < 0
-      || point.interval && (!finite(Date.parse(point.interval.availableAt)) || Date.parse(point.interval.availableAt) > at)) continue;
+    if (!finite(observed) || observed < start || observed > at || !finite(point.value) || point.value < 0) continue;
     const bucket = Math.floor(observed / quarterMs) * quarterMs;
     // An interval still in progress cannot supply a finalized rolling-average reading.
     if (bucket + quarterMs > at) continue;
     const values = buckets.get(bucket) ?? []; values.push(point); buckets.set(bucket, values);
   }
-  let energyKwh = 0, observedHours = 0, samples = 0, last = -Infinity, exact = 0;
-  for (const [bucket, values] of buckets) {
+  let energyKwh = 0, observedHours = 0, samples = 0, last = -Infinity;
+  for (const values of buckets.values()) {
     if (values.length !== 1) continue;
-    const point = values[0], interval = point.interval;
-    let hours = .25;
-    if (interval) {
-      const a = Date.parse(interval.start), b = Date.parse(interval.end);
-      if (interval.at !== point.at || interval.end !== point.at || !interval.source.trim()
-        || Date.parse(interval.nominalStart) !== bucket || Date.parse(interval.nominalEnd) !== bucket + quarterMs
-        || !finite(a) || !finite(b) || b <= a || bucket - a <= 0 || bucket - a > 60_000
-        || bucket + quarterMs - b <= 0 || bucket + quarterMs - b > 60_000) continue;
-      // A partially overlapping real interval is excluded rather than splitting its energy.
-      if (a < start) continue;
-      hours = (b - a) / hourMs; exact++;
-    }
-    energyKwh += point.value / 1000; observedHours += hours; samples++;
+    const point = values[0];
+    energyKwh += point.value / 1000; observedHours += quarterMs / hourMs; samples++;
     last = Math.max(last, Date.parse(point.at));
   }
   // At least four distinct finalized quarters and a reading within the last hour.
@@ -75,6 +63,5 @@ export function applyHouseholdFallback(forecast: HouseholdForecast, observations
     status: appliedSlots === 0 ? forecast.status : 'fallback',
     fallback: { windowHours: config.windowHours, windowStart: new Date(start).toISOString(), windowEnd: forecast.issuedAt,
       minimumSamples: 4, samples, observedHours, averagePowerW, baselinePowerW: config.baselinePowerW, appliedSlots,
-      source: appliedSlots > 0 ? source : null, alignment: samples === 0 ? null : exact === 0 ? 'nominal_quarter_approximation'
-        : exact === samples ? 'observed_intervals' : 'mixed' } };
+      source: appliedSlots > 0 ? source : null, alignment: samples === 0 ? null : 'nominal_quarter_approximation' } };
 }

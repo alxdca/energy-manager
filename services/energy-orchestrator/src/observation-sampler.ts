@@ -1,7 +1,6 @@
 import type {
   EnergyCounterPoint, FinalizedObservations, FinalizedObservationState, ObservationPoint, ObservationSample,
 } from './observation-types.js';
-import type { HouseholdInterval } from './household-model.js';
 
 const quarterMs = 900_000;
 const channels = ['battery', 'solar', 'household'] as const;
@@ -62,7 +61,6 @@ export function createObservationSampler(options: { now?: () => Date; state?: un
   const state = loadState(options.state);
   const candidates = new Map<number, Candidate>();
   const queued: Record<Channel, Map<string, ObservationPoint>> = { battery: new Map(), solar: new Map(), household: new Map() };
-  const householdIntervals = new Map<string, HouseholdInterval>();
 
   function finalize(at = clock()): void {
     if (!Number.isFinite(at.getTime())) return;
@@ -82,11 +80,6 @@ export function createObservationSampler(options: { now?: () => Date; state?: un
           const value = point.value - previous.sample.value;
           if (Number.isFinite(value)) {
             queued[channel].set(point.at, { at: point.at, value });
-            if (channel === 'household') householdIntervals.set(point.at, {
-              at: point.at, start: previous.sample.at, end: point.at,
-              nominalStart: previous.target, nominalEnd: new Date(target).toISOString(),
-              source: point.source, availableAt: at.toISOString(),
-            });
           }
         }
         state[channel] = { target: new Date(target).toISOString(), sample: { ...point,
@@ -124,14 +117,13 @@ export function createObservationSampler(options: { now?: () => Date; state?: un
 
   function pending(): FinalizedObservations {
     return structuredClone({ battery: [...queued.battery.values()], solar: [...queued.solar.values()],
-      household: [...queued.household.values()], householdIntervals: [...householdIntervals.values()], state });
+      household: [...queued.household.values()], state });
   }
 
   function acknowledge(snapshot: FinalizedObservations): void {
     for (const channel of channels) for (const point of snapshot[channel]) {
       if (queued[channel].get(point.at)?.value === point.value) queued[channel].delete(point.at);
     }
-    for (const interval of snapshot.householdIntervals) householdIntervals.delete(interval.at);
   }
   return { record, finalize, pending, acknowledge };
 }

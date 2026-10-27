@@ -1,12 +1,38 @@
 import { createHash } from 'node:crypto';
 import type pg from 'pg';
-import { householdDaySlots, householdModelVersion, type HouseholdForecast, type HouseholdInterval,
-  type HouseholdModel, type HouseholdObservation, type HouseholdWeather } from './household-model.js';
+import { householdDaySlots, householdModelVersion, type HouseholdForecast,
+  type HouseholdModel, type HouseholdWeather } from './household-model.js';
 import type { HouseholdForecastArchive } from './household-service.js';
 import type { HouseholdWeatherArchive } from './household-weather.js';
 import type { EnergyEstimatePoint } from './energy-estimate-history.js';
 
 const weatherId = (weather: HouseholdWeather) => createHash('sha256').update(JSON.stringify(weather)).digest('hex');
+const householdModelKey = 'household_model_v1';
+export const householdForecastKey = 'household_forecast_v1';
+type ForecastContext = Omit<HouseholdForecast, 'slots' | 'hourly' | 'estimatedConsumptionKwh' | 'updatedTotal'> & {
+  slots: Array<Omit<HouseholdForecast['slots'][number], 'estimatedConsumptionKwh'>>;
+  updatedTotal: Omit<NonNullable<HouseholdForecast['updatedTotal']>, 'futureKwh' | 'estimatedConsumptionKwh'> | null;
+};
+export interface HouseholdPublication { calculatedAt: string; forecasts: ForecastContext[] }
+
+/** Numerical forecasts have one durable home: house_forecasts. Metadata holds only the latest context. */
+export function householdForecastFromEstimates(publication: HouseholdPublication | null, date: string, points: EnergyEstimatePoint[]): HouseholdForecast | null {
+  const context = publication?.forecasts.find(forecast => forecast.date === date);
+  if (!context) return null;
+  const values = new Map(points.map(point => [point.start, point.estimatedConsumptionKwh]));
+  const slots = context.slots.map(slot => ({ ...slot, estimatedConsumptionKwh: values.get(slot.start) ?? null }));
+  const sum = (items: typeof slots) => items.some(slot => slot.estimatedConsumptionKwh === null) ? null
+    : items.reduce((total, slot) => total + slot.estimatedConsumptionKwh!, 0);
+  const total = sum(slots), cutoff = Date.parse(context.issuedAt);
+  const future = slots.filter(slot => Date.parse(slot.end) > cutoff);
+  const futureKwh = sum(future) === null ? null : future.reduce((energy, slot) => energy + slot.estimatedConsumptionKwh!
+    * (Date.parse(slot.end) - Math.max(cutoff, Date.parse(slot.start))) / 900_000, 0);
+  const updatedTotal = context.updatedTotal ? { ...context.updatedTotal, futureKwh,
+    estimatedConsumptionKwh: context.updatedTotal.status === 'incomplete' || futureKwh === null ? null : context.updatedTotal.measuredKwh + futureKwh } : null;
+  return { ...context, slots, hourly: Array.from({ length: slots.length / 4 }, (_, i) => ({
+    start: slots[i * 4].start, end: slots[i * 4 + 3].end, estimatedConsumptionKwh: sum(slots.slice(i * 4, i * 4 + 4)),
+  })), estimatedConsumptionKwh: total, status: total === null ? 'unavailable' : context.status, updatedTotal };
+}
 export function createHouseholdArchive(options: {
   pool: pg.Pool;
   transaction<T>(run: (client: pg.PoolClient) => Promise<T>): Promise<T>;
@@ -20,31 +46,26 @@ export function createHouseholdArchive(options: {
     });
   };
   return {
-    async readObservations(start, end, availableAt) {
+    async readObservations(start, end, finalizedThrough) {
       if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start
         || end.getTime() - start.getTime() > 86 * 86_400_000) throw new Error('Invalid training window.');
-      const result = await pool.query<{ at: Date; value: number; start: Date | null; end: Date | null;
-        nominalStart: Date | null; nominalEnd: Date | null; source: string | null; availableAt: Date | null }>(`
-        SELECT o.observed_at AS at, o.value, i.interval_start AS start, i.interval_end AS end,
-          i.nominal_start AS "nominalStart", i.nominal_end AS "nominalEnd", i.source, i.available_at AS "availableAt"
-        FROM energy_history.house_observations o LEFT JOIN energy_history.house_intervals i USING (observed_at)
-        WHERE o.observed_at >= $1 AND o.observed_at < $2
-          AND (i.available_at IS NULL OR i.available_at <= $3) ORDER BY o.observed_at`, [start, end, availableAt]);
-      return result.rows.map(row => ({ at: row.at.toISOString(), value: row.value,
-        ...(row.start ? { interval: { at: row.at.toISOString(), start: row.start.toISOString(), end: row.end!.toISOString(),
-          nominalStart: row.nominalStart!.toISOString(), nominalEnd: row.nominalEnd!.toISOString(),
-          source: row.source!, availableAt: row.availableAt!.toISOString() } } : {}) }));
+      const result = await pool.query<{ at: Date; value: number }>(`
+        SELECT observed_at AS at, value FROM energy_history.house_observations
+        WHERE observed_at >= $1 AND observed_at < $2
+          AND date_bin('15 minutes', observed_at, '1970-01-01T00:00:00Z'::timestamptz)
+            + interval '15 minutes' <= $3
+        ORDER BY observed_at`, [start, end, finalizedThrough]);
+      return result.rows.map(row => ({ at: row.at.toISOString(), value: row.value }));
     },
     async readModel() {
-      const result = await pool.query<{ model: HouseholdModel }>(`SELECT model FROM energy_history.household_training
-        WHERE model->>'version' = $1 ORDER BY trained_at DESC, id DESC LIMIT 1`, [householdModelVersion]);
+      const result = await pool.query<{ model: HouseholdModel }>(`SELECT value AS model FROM energy_history.metadata
+        WHERE key = $1 AND value->>'version' = $2`, [householdModelKey, householdModelVersion]);
       return result.rows[0]?.model ?? null;
     },
-    async saveTraining(run) {
+    async saveModel(model) {
       await transaction(async client => {
-        await client.query(`INSERT INTO energy_history.household_training (id, trained_at, model, inputs)
-          VALUES ($1,$2,$3::jsonb,$4::jsonb)`, [run.model.id, run.model.trainedAt, JSON.stringify(run.model),
-          JSON.stringify({ observations: run.observations, historicalWeather: run.weather ?? null })]);
+        await client.query(`INSERT INTO energy_history.metadata (key, value) VALUES ($1, $2::jsonb)
+          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [householdModelKey, JSON.stringify(model)]);
       });
     },
     saveWeather,
@@ -55,54 +76,57 @@ export function createHouseholdArchive(options: {
         ORDER BY fetched_at DESC LIMIT 1`, [kind, config.latitude, config.longitude, model, at]);
       return result.rows[0]?.input ?? null;
     },
-    async saveForecasts(forecasts, weather) {
+    async saveForecasts(forecasts) {
+      if (!forecasts.length || new Set(forecasts.map(forecast => forecast.date)).size !== forecasts.length) throw new Error('Invalid household forecast.');
+      const cutoff = Date.parse(forecasts[0].issuedAt);
       for (const forecast of forecasts) {
         const expected = householdDaySlots(forecast.date);
-        if (!Number.isFinite(Date.parse(forecast.issuedAt)) || forecast.slots.length !== expected.length
+        if (!Number.isFinite(cutoff) || Date.parse(forecast.issuedAt) !== cutoff || forecast.scope !== 'household_total' || forecast.slots.length !== expected.length
           || forecast.slots.some((slot, i) => slot.start !== expected[i].start || slot.end !== expected[i].end
             || slot.estimatedConsumptionKwh !== null && (!Number.isFinite(slot.estimatedConsumptionKwh) || slot.estimatedConsumptionKwh < 0))) {
           throw new Error('Invalid household forecast.');
         }
       }
       await transaction(async client => {
-        for (const forecast of forecasts) await client.query(`INSERT INTO energy_history.household_forecasts
-          (issued_at, target_date, model_version, scope, model_id, forecast, inputs)
-          VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb) ON CONFLICT DO NOTHING`,
-        [forecast.issuedAt, forecast.date, forecast.modelVersion, forecast.scope, forecast.modelId, JSON.stringify(forecast),
-          JSON.stringify({ weatherId: weather ? weatherId(weather) : null, measurementCutoff: forecast.issuedAt,
-            alignment: 'nominal_quarter_approximation' })]);
+        const saved = await client.query<{ key: string; value: HouseholdPublication }>('SELECT key, value FROM energy_history.metadata WHERE key = ANY($1::text[])',
+          [[householdForecastKey, 'forecast_batch_v1']]);
+        const previous = saved.rows.find(row => row.key === householdForecastKey)?.value;
+        if (saved.rows.some(row => Date.parse(row.value.calculatedAt) > cutoff)) throw new Error('Household forecast is older than the saved publication.');
+        const activeStart = new Date(Math.floor(cutoff / 900_000) * 900_000);
+        const firstStart = forecasts.map(forecast => forecast.slots[0].start).sort()[0];
+        const existing = await client.query<{ start: Date }>(`SELECT interval_start AS start FROM energy_history.house_forecasts
+          WHERE interval_start >= $1 AND interval_start <= $2`, [firstStart, activeStart]);
+        const frozen = new Set(existing.rows.map(point => point.start.toISOString()));
+        const contexts = forecasts.map(forecast => {
+          const { estimatedConsumptionKwh: _total, hourly: _hourly, slots, updatedTotal, ...context } = forecast;
+          const oldSlots = new Map(previous?.forecasts.find(old => old.date === forecast.date)?.slots.map(slot => [slot.start, slot]));
+          return { ...context, updatedTotal: updatedTotal ? { measuredKwh: updatedTotal.measuredKwh,
+            status: updatedTotal.status, measuredThrough: updatedTotal.measuredThrough } : null,
+            slots: slots.map(({ estimatedConsumptionKwh: _energy, ...slot }) => frozen.has(slot.start)
+              ? oldSlots.get(slot.start) ?? { ...slot, source: 'configured_baseline' as const, observations: 0,
+                matchingWeekdays: 0, weekdayFactor: 1 as const, weekdayWeightShare: null, weatherAdjustmentKwh: null }
+              : slot) };
+        });
+        await client.query('DELETE FROM energy_history.house_forecasts WHERE interval_start > $1', [activeStart]);
+        const points = forecasts.flatMap(forecast => forecast.slots).filter(slot => Date.parse(slot.end) > cutoff && slot.estimatedConsumptionKwh !== null);
+        if (points.length) await client.query(`INSERT INTO energy_history.house_forecasts (interval_start, energy_kwh)
+          SELECT x.start::timestamptz, x."estimatedConsumptionKwh" FROM jsonb_to_recordset($1::jsonb)
+            AS x(start text, "estimatedConsumptionKwh" double precision) ON CONFLICT (interval_start) DO NOTHING`, [JSON.stringify(points)]);
+        await client.query(`INSERT INTO energy_history.metadata (key, value) VALUES ($1, $2::jsonb)
+          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [householdForecastKey,
+          JSON.stringify({ calculatedAt: forecasts[0].issuedAt, forecasts: contexts } satisfies HouseholdPublication)]);
       });
     },
     async readForecast(date) {
-      householdDaySlots(date);
-      const result = await pool.query<{ forecast: HouseholdForecast }>(`SELECT forecast FROM energy_history.household_forecasts
-        WHERE target_date = $1 AND model_version = $2 AND scope = 'household_total'
-        ORDER BY issued_at DESC LIMIT 1`, [date, householdModelVersion]);
-      return result.rows[0]?.forecast ?? null;
+      const slots = householdDaySlots(date);
+      const result = await pool.query<{ publication: HouseholdPublication | null; points: Array<{ start: string; estimatedConsumptionKwh: number }> }>(`
+        SELECT (SELECT value FROM energy_history.metadata WHERE key = $1) AS publication,
+          COALESCE((SELECT json_agg(json_build_object('start', interval_start, 'estimatedConsumptionKwh', energy_kwh) ORDER BY interval_start)
+            FROM energy_history.house_forecasts WHERE interval_start >= $2 AND interval_start < $3), '[]'::json) AS points`,
+      [householdForecastKey, slots[0].start, slots.at(-1)!.end]);
+      const row = result.rows[0];
+      return householdForecastFromEstimates(row.publication, date, row.points.map(point => ({ ...point,
+        start: new Date(point.start).toISOString(), end: new Date(Date.parse(point.start) + 900_000).toISOString() })));
     },
   };
-}
-
-/** Same transaction as the delta and sampler checkpoint, so failed flushes cannot leave orphan metadata. */
-export async function writeHouseholdIntervals(client: pg.PoolClient, intervals: HouseholdInterval[]) {
-  if (!intervals.length) return;
-  await client.query(`INSERT INTO energy_history.house_intervals
-    (observed_at, interval_start, interval_end, nominal_start, nominal_end, source, available_at)
-    SELECT x.at::timestamptz, x.start::timestamptz, x.end::timestamptz, x."nominalStart"::timestamptz,
-      x."nominalEnd"::timestamptz, x.source, x."availableAt"::timestamptz
-    FROM jsonb_to_recordset($1::jsonb) AS x(at text, start text, "end" text, "nominalStart" text,
-      "nominalEnd" text, source text, "availableAt" text) ON CONFLICT DO NOTHING`, [JSON.stringify(intervals)]);
-}
-
-/** As-issued predictions for a historical chart: only versions issued before each slot started. */
-export async function readHouseholdPredictionHistory(pool: pg.Pool, date: string, now: Date): Promise<EnergyEstimatePoint[]> {
-  const result = await pool.query<{ at: string; value: number | null; source: EnergyEstimatePoint['source'] | null }>(`SELECT DISTINCT ON (slot->>'start')
-      slot->>'start' AS at, (slot->>'estimatedConsumptionKwh')::double precision * 1000 AS value, slot->>'source' AS source
-    FROM energy_history.household_forecasts f, LATERAL jsonb_array_elements(f.forecast->'slots') slot
-    WHERE f.target_date = $1 AND f.issued_at <= $2 AND f.issued_at <= (slot->>'start')::timestamptz
-      AND f.model_version = $3
-    ORDER BY slot->>'start', f.issued_at DESC`, [date, now, householdModelVersion]);
-  return result.rows.map(point => ({ start: point.at, end: new Date(Date.parse(point.at) + 900_000).toISOString(),
-    estimatedConsumptionKwh: point.value === null ? null : point.value / 1000,
-    ...(point.source ? { source: point.source } : {}) }));
 }
