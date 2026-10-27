@@ -69,6 +69,7 @@ export async function renderPage(page: PageKey): Promise<string> {
     PAGE_INITIAL_DATE: page === 'donnees' ? '—' : 'Europe/Zurich',
     PAGE_TIMEZONE_LABEL: page === 'donnees' ? '' : 'Zurich',
     PAGE_STYLES: page === 'donnees' ? '<link rel="stylesheet" href="/history.css">' : '',
+    PAGE_ACTIONS: page === 'donnees' ? '<button class="theme-toggle" type="button" id="household-train" aria-label="Relancer l’apprentissage complet" title="Relancer l’apprentissage complet"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg><span>Relancer l’apprentissage complet</span></button>' : '',
     PAGE_CONTENT: homeControls ? `<div class="home-overview">${content}\n<div class="desktop-home-forecast">${homeForecast.replaceAll('{{ENERGY_UNIT}}', 'kWh')}</div></div>\n<div class="desktop-home-controls">${homeControls}</div>` : displayContent,
     PAGE_SCRIPTS: [
       page !== 'donnees' ? '<script src="/dashboard.js" defer></script>' : '',
