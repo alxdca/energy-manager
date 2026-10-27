@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const data = await import(new URL('../public/history-data.js', import.meta.url).href);
-const { requestHistoryJson } = await import(new URL('../public/history.js', import.meta.url).href);
+const { requestHistoryJson, renderHistoryChart } = await import(new URL('../public/history.js', import.meta.url).href);
 const { historyGroups, allHistorySelection, defaultHistorySelection, historyTable, formatHistoryValue, validHistoryDate, shiftHistoryDate, todayInZurich } = data;
 const minuteMs = 60000;
 const quarterMs = 15 * minuteMs;
@@ -22,6 +22,64 @@ function fixture(periodStart = '2026-01-14T23:00:00.000Z', periodEnd = '2026-01-
     energyEstimates: intervals.map(interval => ({ ...interval, estimatedConsumptionKwh: .5 })),
     solarEstimates: intervals.map(interval => ({ ...interval, estimatedProductionKwh: 2 })) };
 }
+
+test('hourly chart compares house and solar totals for the same 10:00 interval', t => {
+  class Element {
+    children: Element[] = [];
+    attributes = new Map<string, string>();
+    textContent = ''; hidden = false;
+    constructor(public tagName: string) {}
+    append(child: Element) { this.children.push(child); }
+    replaceChildren() { this.children = []; }
+    setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+  }
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: {
+    createElementNS: (_namespace: string, tag: string) => new Element(tag),
+  } });
+  t.after(() => {
+    if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
+    else Reflect.deleteProperty(globalThis, 'document');
+  });
+  t.mock.method(Date, 'now', () => Date.parse('2026-10-27T12:00:00Z'));
+  const day = fixture('2026-10-26T23:00:00.000Z', '2026-10-27T23:00:00.000Z');
+  const at = (quarter: number) => new Date(Date.parse('2026-10-27T09:00:00Z') + quarter * quarterMs).toISOString();
+  day.observations.solar = [300, 300, 300, 334].map((value, i) => ({ at: at(i), value }));
+  day.observations.household = [400, 400, 400, 696].map((value, i) => ({ at: at(i), value }));
+  day.solarEstimates = [0, 1, 2, 3].map(i => ({ start: at(i), end: at(i + 1), estimatedProductionKwh: 2.475 / 4 }));
+  day.energyEstimates = [{ start: at(0), end: at(1), estimatedConsumptionKwh: .260 }];
+  day.battery.points = [50, 51, 52, 53].map((socPercent, i) => ({ at: at(i), socPercent }));
+  day.historicalEstimated.points = [60, 61, 62, 63].map((socPercent, i) => ({ at: at(i + 1), socPercent }));
+  const chart = new Element('div'), svg = new Element('svg'), status = new Element('p');
+  const series = (name: string) => svg.children.filter(node => node.attributes.get('class') === name);
+  renderHistoryChart(day, chart, svg, status, 'hour');
+  const house = series('chart-demand-measured-point')[0], solar = series('chart-solar-measured')[0];
+  const tableRow = historyTable(day, allHistorySelection, 'hour').rows[10];
+  assert.equal(tableRow.label, '10:00');
+  assert.equal(house.children[0].textContent, `10:00 · Maison relevée : ${formatHistoryValue(tableRow.values.houseMeasured, { unit: 'Wh' })} Wh`);
+  assert.equal(solar.children[0].textContent, `10:00 · Solaire relevé : ${formatHistoryValue(tableRow.values.solarMeasured, { unit: 'Wh' })} Wh`);
+  assert.match(house.children[0].textContent, /1[  '’]896 Wh/);
+  assert.match(solar.children[0].textContent, /1[  '’]234 Wh/);
+  assert.equal(series('chart-demand-measured-point').length, 1);
+  assert.equal(Number(house.attributes.get('cx')), Number(solar.attributes.get('x')) + Number(solar.attributes.get('width')) / 2);
+  assert.ok(Number(house.attributes.get('cy')) < Number(solar.attributes.get('y')), 'Higher house consumption must appear above measured solar production');
+  assert.match(series('chart-demand-point')[0].children[0].textContent, /10:00.*260 Wh/);
+  assert.match(series('chart-solar')[0].children[0].textContent, /10:00.*2[  '’]475 Wh/);
+  assert.match(svg.children.find(node => node.tagName === 'desc')!.textContent, /Maison par heure/);
+  assert.match(svg.children.find(node => node.tagName === 'desc')!.textContent, /Batterie par heure/);
+  assert.equal(series('chart-battery-measured-point').length, 1);
+  assert.equal(series('chart-battery-estimated-point').length, 1);
+  assert.equal(series('chart-battery-measured-point')[0].children[0].textContent, '11:00 · Batterie relevée : 53 %');
+  assert.equal(series('chart-battery-estimated-point')[0].children[0].textContent, '11:00 · Batterie prévue : 63 %');
+
+  renderHistoryChart(day, chart, svg, status, 'quarter');
+  assert.equal(series('chart-demand-measured-point').length, 4);
+  assert.equal(series('chart-solar-measured').length, 4);
+  assert.equal(series('chart-battery-measured-point').length, 4);
+  assert.equal(series('chart-battery-estimated-point').length, 4);
+  assert.match(series('chart-demand-measured-point')[0].children[0].textContent, /10:00.*400 Wh/);
+  assert.match(series('chart-solar-measured')[0].children[0].textContent, /10:00.*300 Wh/);
+});
 
 test('the joined table exposes six values from quarter-hour history without timestamps or source versions', () => {
   assert.deepEqual(historyGroups.map((group: any) => [group.id, group.label]), [['solar', 'Solaire'], ['house', 'Maison'], ['battery', 'Batterie']]);

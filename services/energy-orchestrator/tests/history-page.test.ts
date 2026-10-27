@@ -109,7 +109,7 @@ test('history controls render one joined table, use quarter-hour records directl
   assert.equal(series('chart-solar').length, 4, 'Solar estimates also use quarter-hour bars');
   assert.match(series('chart-solar')[0].children[0].textContent, /00:00.*250 Wh/);
   assert.ok(Math.abs(Number(solarBars[0].attributes.get('width')) - 608 / 96 * .34) < 1e-9);
-  assert.match(get('chart-frequency').textContent, /Solaire : 15 min/);
+  assert.match(get('chart-frequency').textContent, /Solaire, maison et batterie : 15 min/);
   const housePoints = series('chart-demand-measured-point');
   assert.equal(housePoints.length, 4, 'The chart must keep every measured quarter instead of summing by hour');
   assert.match(housePoints[1].children[0].textContent, /00:15.*100 Wh/);
@@ -146,8 +146,11 @@ test('history controls render one joined table, use quarter-hour records directl
   assert.equal(series('chart-solar').length, 1);
   assert.match(series('chart-solar')[0].children[0].textContent, /00:00.*1[  '’]000 Wh/);
   assert.ok(Math.abs(Number(series('chart-solar-measured')[0].attributes.get('width')) - 608 / 24 * .34) < 1e-9);
-  assert.match(get('chart-frequency').textContent, /Solaire : 1 h/);
-  assert.equal(series('chart-demand-measured-point').length, 4, 'Hourly table selection does not aggregate the chart');
+  assert.match(get('chart-frequency').textContent, /Solaire, maison et batterie : 1 h/);
+  assert.equal(series('chart-demand-measured-point').length, 2, 'House and solar use the same hourly totals');
+  assert.match(series('chart-demand-measured-point')[0].children[0].textContent, /00:00.*400 Wh/);
+  assert.equal(series('chart-battery-measured-point').length, 2, 'Battery points also use the selected hourly intervals');
+  assert.match(series('chart-battery-measured-point')[0].children[0].textContent, /01:00.*48 %/);
   assert.ok(maximumRequests <= 1, 'only one day is ever requested at once');
   get('previous').fire('click'); await settle();
   assert.equal(calls.length, 2);
@@ -181,7 +184,9 @@ test('history controls render one joined table, use quarter-hour records directl
   assert.equal(new URL(location.href).searchParams.has('view'), false);
   assert.equal(series('chart-solar').length, 4, 'Switching back restores quarter-hour solar bars on a DST day');
   assert.ok(Math.abs(Number(series('chart-solar-measured')[0].attributes.get('width')) - 608 / 100 * .34) < 1e-9);
-  assert.match(get('chart-frequency').textContent, /Solaire : 15 min/);
+  assert.match(get('chart-frequency').textContent, /Solaire, maison et batterie : 15 min/);
+  assert.equal(series('chart-demand-measured-point').length, 4, 'Switching back restores quarter-hour house points');
+  assert.equal(series('chart-battery-measured-point').length, 4, 'Switching back restores quarter-hour battery points');
 
   const beforeTrainingRefresh = calls.length;
   windowEvents.get('household-forecast-updated')?.(); await settle();

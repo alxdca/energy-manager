@@ -51,7 +51,8 @@ export function batteryForecastMessage(day) {
 }
 
 export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
-  const model = historyTable(day, allHistorySelection, 'quarter');
+  const chartView = view === 'quarter' ? 'quarter' : 'hour';
+  const model = historyTable(day, allHistorySelection, chartView);
   svg.replaceChildren();
   if (!model.hasData) {
     chart.hidden = true;
@@ -62,11 +63,9 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
   chart.hidden = false;
   status.hidden = true;
   const rows = model.rows;
-  const solarView = view === 'quarter' ? 'quarter' : 'hour';
-  const solarRows = historyTable(day, ['solarEstimated', 'solarMeasured'], solarView).rows;
   const numeric = value => typeof value === 'number' && Number.isFinite(value);
   const maximum = Math.max(0, ...rows.flatMap(row => [row.values.houseEstimated, row.values.houseMeasured]).filter(numeric),
-    ...solarRows.flatMap(row => [row.values.solarEstimated, row.values.solarMeasured]).filter(numeric));
+    ...rows.flatMap(row => [row.values.solarEstimated, row.values.solarMeasured]).filter(numeric));
   const step = maximum <= 2 ? .5 : maximum <= 5 ? 1 : 10 ** Math.floor(Math.log10(maximum));
   const ceiling = Math.max(step, Math.ceil(maximum / step) * step);
   const left = 42, right = 650, top = 24, bottom = 208;
@@ -82,7 +81,8 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
   };
   const tooltip = (element, label) => add('title', {}, label, element);
   add('title', {}, 'Données énergétiques de la journée');
-  add('desc', {}, `Solaire ${solarView === 'quarter' ? 'par tranches de 15 minutes' : 'par heure'}, prévu en barres larges et relevé en barres superposées. Maison par tranches de 15 minutes, prévue en ligne pointillée et relevée en ligne continue. Énergie en Wh sur l’axe gauche. Batterie relevée en violet continu et prévue en pointillé sur l’axe droit. ${rows.length} tranches de 15 minutes, fuseau Europe/Zurich.`);
+  const chartPeriod = chartView === 'quarter' ? 'par tranches de 15 minutes' : 'par heure';
+  add('desc', {}, `Solaire ${chartPeriod}, prévu en barres larges et relevé en barres superposées. Maison ${chartPeriod}, prévue en ligne pointillée et relevée en ligne continue. Énergie en Wh sur l’axe gauche. Batterie ${chartPeriod}, relevée en violet continu et prévue en pointillé sur l’axe droit ; dernier niveau de chaque période, sans moyenne. ${rows.length} ${chartView === 'quarter' ? 'tranches de 15 minutes' : 'heures'}, fuseau Europe/Zurich.`);
   add('text', { x: left, y: 13, class: 'chart-axis' }, 'Wh');
   for (const value of [0, ceiling / 2, ceiling]) {
     add('line', { x1: left, x2: right, y1: y(value), y2: y(value), class: 'chart-grid' });
@@ -94,8 +94,8 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
       add('text', { x: x(index), y: 232, 'text-anchor': 'middle', class: 'chart-axis' }, hour.replace(':00', ' h'));
     }
   });
-  const solarWidth = (right - left) / solarRows.length;
-  solarRows.forEach((row, index) => {
+  const solarWidth = width;
+  rows.forEach((row, index) => {
     const solarX = left + (index + .5) * solarWidth;
     for (const [key, className, fraction, label] of [
       ['solarEstimated', 'chart-solar', .3, 'Solaire prévu'],
@@ -276,7 +276,7 @@ function initializeHistory() {
       fragment.append(make('p', 'panel history-no-selection', 'Aucune valeur détaillée enregistrée pour cette période et cette sélection.'));
     }
     elements.results.replaceChildren(fragment);
-    elements['chart-frequency'].textContent = `Solaire : ${state.view === 'quarter' ? '15 min' : '1 h'} · Maison et batterie : 15 min`;
+    elements['chart-frequency'].textContent = `Solaire, maison et batterie : ${state.view === 'quarter' ? '15 min' : '1 h'}`;
     const batteryStatus = byId('battery-status');
     if (batteryStatus) {
       batteryStatus.textContent = batteryForecastMessage(state.day);
