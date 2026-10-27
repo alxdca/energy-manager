@@ -1,3 +1,4 @@
+import type { ForecastDayOffset } from './forecast-horizon.js';
 import { getCalendarDayBounds, policy, timeZone } from './policy.js';
 
 export interface ForecastConfig {
@@ -40,7 +41,7 @@ export interface ForecastOptions {
   config?: ForecastConfig | null;
   fetch?: typeof globalThis.fetch;
   now?: () => Date;
-  dayOffset?: 0 | 1 | 2;
+  dayOffset?: ForecastDayOffset;
   cacheAlignment?: 'elapsed' | 'clock_hour';
 }
 
@@ -111,7 +112,7 @@ export function loadForecastConfig(env: Record<string, string | undefined> = pro
 const localDate = new Intl.DateTimeFormat('en-CA', {
   timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
 });
-function targetDate(now: Date, dayOffset: 0 | 1 | 2): string {
+function targetDate(now: Date, dayOffset: ForecastDayOffset): string {
   const parts = Object.fromEntries(localDate.formatToParts(now).map(part => [part.type, part.value]));
   return new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + dayOffset)).toISOString().slice(0, 10);
 }
@@ -210,7 +211,10 @@ interface ForecastState {
 }
 
 export function createForecastReader(options: ForecastOptions = {}): () => Promise<SolarForecast> {
-  const config = options.config === undefined ? loadForecastConfig() : options.config === null ? null : validateConfig(options.config);
+  const configured = options.config === undefined ? loadForecastConfig() : options.config === null ? null : validateConfig(options.config);
+  // CH2 stops at 120 hours; complete later calendar days use the longer-range blend.
+  const config = configured && (options.dayOffset ?? 1) >= 3
+    ? { ...configured, weatherModel: 'best_match' as const } : configured;
   const request = options.fetch ?? globalThis.fetch;
   const now = options.now ?? (() => new Date());
   const dayOffset = options.dayOffset ?? 1;

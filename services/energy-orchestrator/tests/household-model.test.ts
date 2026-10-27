@@ -53,13 +53,53 @@ test('weekday bonus waits for four matching days and enough complete sampling', 
   assert.equal(predictHousehold({ date: '2026-10-27', at, model: short }).slots[0].weekdayFactor, 1);
 });
 
-test('duplicate slots, future data, today and older than 84 days cannot enter training', () => {
+test('today contributes to training while duplicate slots, future data and older than 84 days stay excluded', () => {
   const observations = history('2026-10-27', 1);
   observations.push({ ...observations[0] }, { at: '2026-10-27T07:14:30Z', value: 999999 },
+    { at: '2026-10-27T11:00:01Z', value: 999999 },
     { at: '2026-10-28T07:14:30Z', value: 999999 }, { at: '2026-01-01T07:14:30Z', value: 999999 });
   const model = trainHouseholdModel({ id: 'test', at, observations });
-  assert.equal(model.training.observations, 95); assert.equal(model.training.usableDays, 1);
+  assert.equal(model.training.observations, 96); assert.equal(model.training.usableDays, 2);
+  assert.equal(model.training.completeSamplingDays, 0); assert.equal(model.training.to, '2026-10-27');
   assert.equal(predictHousehold({ date: '2026-10-28', at, model }).slots[0].estimatedConsumptionKwh, null);
+});
+
+test('elapsed readings from today update matching slots without completing or extrapolating the day', () => {
+  const today = history('2026-10-28', 1, () => .5, true)
+    .filter(p => Date.parse(p.interval!.availableAt) <= at.getTime());
+  const late = { ...today[1], interval: { ...today[1].interval!, availableAt: '2026-10-27T11:00:01Z' } };
+  const observations = [...history('2026-10-27', 1), ...today, late];
+  const model = trainHouseholdModel({ id: 'partial-today', at, observations });
+  assert.equal(today.length, 48);
+  assert.equal(model.training.observations, 144);
+  assert.equal(model.training.completeSamplingDays, 1);
+  const forecast = predictHousehold({ date: '2026-10-28', at, model });
+  const weight = 2 ** (-1 / 14);
+  near(forecast.slots[0].estimatedConsumptionKwh, (.5 + .25 * weight) / (1 + weight));
+  assert.equal(forecast.slots[0].observations, 2);
+  near(forecast.slots[48].estimatedConsumptionKwh, .25);
+  assert.equal(forecast.slots[48].observations, 1);
+  const onlyToday = trainHouseholdModel({ id: 'only-today', at, observations: today });
+  assert.equal(onlyToday.training.completeSamplingDays, 0);
+  const incomplete = predictHousehold({ date: '2026-10-28', at, model: onlyToday });
+  near(incomplete.slots[0].estimatedConsumptionKwh, .5);
+  assert.equal(incomplete.slots[48].estimatedConsumptionKwh, null);
+  assert.equal(incomplete.estimatedConsumptionKwh, null);
+});
+
+test('today uses Zurich calendar dates at midnight and both DST offsets', () => {
+  for (const timestamp of ['2026-01-14T23:15:00Z', '2026-03-29T00:15:00Z', '2026-03-29T01:15:00Z',
+    '2026-10-25T00:15:00Z', '2026-10-25T01:15:00Z']) {
+    const time = new Date(timestamp);
+    const model = trainHouseholdModel({ id: timestamp, at: time,
+      observations: [{ at: new Date(time.getTime() - 30_000).toISOString(), value: 0 }] });
+    assert.equal(model.training.observations, 1);
+    assert.equal(model.training.usableDays, 1);
+    assert.equal(model.training.completeSamplingDays, 0);
+    assert.equal(model.training.to, model.trainingDate);
+    const forecast = predictHousehold({ date: shiftDate(model.trainingDate, 1), at: time, model });
+    assert.ok(forecast.slots.some(s => s.estimatedConsumptionKwh === 0));
+  }
 });
 
 test('daylight saving produces 92/96/100 contiguous quarters, hourly sums and exact daily sums', () => {

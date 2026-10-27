@@ -956,3 +956,35 @@ test('independent quarters are retained by hourly cache and refresh together wit
   assert.equal(refreshed.quarterHourly?.length, 96);
   assert.equal(refreshed.fetchedAt, clock.toISOString());
 });
+
+test('long-range readers target all seven future days and report the longer-range weather model', async () => {
+  for (const dayOffset of [1, 2, 3, 4, 5, 6, 7, 8] as const) {
+    const target = `2026-01-${String(15 + dayOffset).padStart(2, '0')}`;
+    const urls: URL[] = [];
+    const read = createForecastReader({ config: { ...config, weatherModel: 'meteoswiss_icon_ch2' }, dayOffset, now,
+      fetch: async url => { urls.push(new URL(String(url))); return Response.json(payload(target)); } });
+    const result = await read();
+    assert.equal(result.status, 'online'); assert.equal(result.date, target);
+    assert.equal(result.weatherModel, dayOffset < 3 ? 'meteoswiss_icon_ch2' : 'best_match');
+    assert.equal(urls[0].searchParams.get('start_date'), target);
+    assert.equal(urls[0].searchParams.get('models'), dayOffset < 3 ? 'meteoswiss_icon_ch2' : null);
+  }
+});
+
+test('the final forecast and lookahead days retain complete tilted quarter profiles with the long-range model', async () => {
+  for (const dayOffset of [7, 8] as const) {
+    let requests = 0;
+    const read = createForecastReader({ config: { ...eastWestConfig, weatherModel: 'meteoswiss_icon_ch2' }, dayOffset, now,
+      fetch: async input => {
+        requests++;
+        const url = new URL(String(input));
+        assert.equal(url.searchParams.get('models'), null);
+        return Response.json(url.searchParams.has('minutely_15') ? tiltedPayload(100, url) : providerPayload(url));
+      } });
+    const result = await read();
+    assert.equal(result.status, 'online'); assert.equal(result.weatherModel, 'best_match');
+    assert.equal(result.date, `2026-01-${15 + dayOffset}`);
+    assert.equal(result.quarterHourly?.length, 96); assert.equal(result.hourly?.length, 24);
+    await read(); assert.equal(requests, 3);
+  }
+});

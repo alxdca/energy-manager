@@ -33,16 +33,23 @@ export function getLocalDate(date: Date): string {
   return `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
 }
 
+// Weekly simulations revisit fixed boundaries; cache numbers and return independent Dates.
+const wallTimeCache = new Map<number, number>();
+
 // Resolve scheduled local wall times against Zurich's offset on that date.
 // These boundaries avoid the repeated/missing 02:00 hour at DST changes.
 function wallTime(day: Date, hour: number, minute = 0): Date {
   const target = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), hour, minute);
+  const saved = wallTimeCache.get(target);
+  if (saved !== undefined) return new Date(saved);
   let candidate = target;
   for (let attempt = 0; attempt < 3; attempt++) {
     const parts = localParts(new Date(candidate));
     const represented = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
     candidate += target - represented;
   }
+  if (wallTimeCache.size >= 512) wallTimeCache.delete(wallTimeCache.keys().next().value!);
+  wallTimeCache.set(target, candidate);
   return new Date(candidate);
 }
 

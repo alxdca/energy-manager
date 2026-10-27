@@ -324,3 +324,28 @@ test('daily view shows fourteen dated rows including empty days and uses the las
   assert.equal(table.hasData, true);
   assert.deepEqual(historyTable(days, ['solarMeasured'], 'day').columns.map((column: any) => column.key), ['solarMeasured']);
 });
+
+test('weekly forecast rows link to detailed days and distinguish zero, unknown and stale values', async t => {
+  const { renderWeekForecast } = await import(new URL('../public/history.js', import.meta.url).href);
+  class Node {
+    children: Node[] = []; textContent = ''; dataset: Record<string, string> = {}; href = ''; title = ''; scope = '';
+    append(...nodes: Node[]) { this.children.push(...nodes); }
+    replaceChildren(...nodes: Node[]) { this.children = nodes; }
+  }
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { createElement: () => new Node(), createDocumentFragment: () => new Node() } });
+  t.after(() => { delete (globalThis as any).document; });
+  const days = Array.from({ length: 7 }, (_, index) => ({ date: shiftHistoryDate('2026-10-25', index),
+    productionKwh: index === 0 ? 0 : null, consumptionKwh: 25, consumptionSource: 'recent_average',
+    batteryEndSocPercent: index === 0 ? 80 : null, batteryMinSocPercent: null, solarStatus: index === 0 ? 'stale' : 'offline' }));
+  const body = new Node(); renderWeekForecast({ days }, body);
+  const rows = body.children[0].children;
+  assert.equal(rows.length, 7);
+  assert.equal(rows[0].children[0].children[0].href, '/donnees?date=2026-10-25');
+  assert.equal(rows[0].children[1].textContent, '≈ 0');
+  assert.equal(rows[0].children[1].dataset.stale, 'true');
+  assert.equal(rows[0].children[2].title, 'Moyenne récente');
+  assert.equal(rows[0].children[3].textContent, '≈ 80');
+  assert.equal(rows[1].children[1].textContent, '—');
+  assert.equal(rows[1].children[3].textContent, '—');
+  assert.throws(() => renderWeekForecast({ days: days.slice(1) }, body), /invalides/);
+});

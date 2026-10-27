@@ -1,4 +1,16 @@
 <div class="history-page" id="history-view">
+  <section class="panel history-controls" aria-labelledby="week-heading">
+    <div class="history-toolbar"><h2 id="week-heading">Prévisions sur 7 jours</h2><button type="button" id="week-refresh">Actualiser</button></div>
+    <p class="history-footnote">De demain aux sept prochains jours · Consommation maison, voiture non isolée. Batterie simulée selon le pilotage et la consommation de référence.</p>
+    <p id="week-status" class="history-status" role="status" aria-live="polite">Chargement des prévisions…</p>
+    <div class="history-table-scroll" tabindex="0" role="region" aria-label="Prévisions des sept prochains jours">
+      <table class="history-values week-values"><caption class="sr-only">Production, consommation et niveau de batterie prévus</caption>
+        <thead><tr><th scope="col">Jour</th><th scope="col" aria-label="Production, kWh"><span class="week-full">Production</span><span class="week-short" aria-hidden="true">Prod.</span><span class="history-unit">kWh</span></th><th scope="col" aria-label="Consommation, kWh"><span class="week-full">Consommation</span><span class="week-short" aria-hidden="true">Conso.</span><span class="history-unit">kWh</span></th><th scope="col" aria-label="Batterie en fin de jour, %"><span class="week-full">Batterie en fin de jour</span><span class="week-short" aria-hidden="true">Batterie fin</span><span class="history-unit">%</span></th><th scope="col" aria-label="Batterie minimum, %"><span class="week-full">Batterie minimum</span><span class="week-short" aria-hidden="true">Batterie min.</span><span class="history-unit">%</span></th></tr></thead>
+        <tbody id="week-days"></tbody>
+      </table>
+    </div>
+    <p class="history-footnote">Prévisions indicatives, révisées toutes les 15 minutes. Un tiret indique une valeur indisponible. Sélectionnez un jour pour consulter ses courbes.</p>
+  </section>
   <section class="panel history-controls" aria-labelledby="household-training-heading">
     <h2 id="household-training-heading">Prévision de consommation maison</h2>
     <p>Apprentissage quotidien, prévisions toutes les 15 minutes. Consommation totale mesurée, voiture non isolée. Validation en observation avant utilisation pour la batterie.</p>

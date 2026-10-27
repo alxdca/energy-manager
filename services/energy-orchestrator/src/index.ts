@@ -1,3 +1,4 @@
+import { forecastDayOffsets } from './forecast-horizon.js';
 import { serve } from '@hono/node-server';
 import type { Server } from 'node:http';
 import { createApi } from './api.js';
@@ -71,7 +72,7 @@ const forecastConfig = loadForecastConfig();
 const household = createHouseholdService({ archive: history.householdArchive,
   weather: createHouseholdWeather({ config: forecastConfig, archive: history.householdArchive }),
   finalizeMeasurements: history.flush });
-const solarReaders = ([0, 1, 2] as const).map(dayOffset => createForecastReader({ config: forecastConfig, dayOffset, cacheAlignment: 'clock_hour' }));
+const solarReaders = forecastDayOffsets.map(dayOffset => createForecastReader({ config: forecastConfig, dayOffset, cacheAlignment: 'clock_hour' }));
 const consumption = loadConsumptionConfig();
 let automation: Automation;
 let carAutomation: CarAutomation;

@@ -21,7 +21,8 @@ test('history controls render one joined table, use quarter-hour records directl
     all(): Element[] { return [this, ...this.children.flatMap(child => child.all())]; }
     fire(name: string) { this.listeners.get(name)?.({ preventDefault() {} }); }
   }
-  const elements = new Map(ids.map(id => [id, new Element('div')]));
+  // This fixture exercises the selected-day controller; weekly rows have their own rendering checks.
+  const elements = new Map(ids.filter(id => !id.startsWith('week-')).map(id => [id, new Element('div')]));
   elements.set('local-date', new Element('span')); elements.set('local-time', new Element('span'));
   const get = (name: string) => elements.get(`history-${name}`)!;
   const windowEvents = new Map<string, (event?: any) => void>();

@@ -1,3 +1,5 @@
+import { forecastDays } from './forecast-horizon.js';
+import { summarizeForecast } from './weekly-forecast.js';
 import { Hono } from 'hono';
 import { createControlsService } from './controls.js';
 import { readFile } from 'node:fs/promises';
@@ -149,6 +151,24 @@ export function createApi(options: ApiOptions = {}) {
     if (!options.historyReader) return c.json({ error: 'L’historique des mesures n’est pas configuré.' }, 503);
     try { return c.json(await options.historyReader.day(date, now())); }
     catch { return c.json({ error: 'L’historique des mesures est indisponible.' }, 503); }
+  });
+  app.get('/api/forecast/week', async c => {
+    c.header('Cache-Control', 'no-store');
+    const today = getLocalDate(now());
+    const runtime = options.estimates?.projection();
+    const calculatedAt = options.estimates?.status().calculatedAt;
+    const days = await Promise.all(Array.from({ length: forecastDays }, async (_, index) => {
+      const date = new Date(Date.parse(`${today}T00:00:00Z`) + (index + 1) * 86_400_000).toISOString().slice(0, 10);
+      const [saved, house] = await Promise.allSettled([
+        Promise.resolve().then(() => options.forecastStore?.readForecast(date) ?? null),
+        Promise.resolve().then(() => options.household?.forecast(date) ?? null),
+      ]);
+      const publication = saved.status === 'fulfilled' ? saved.value : null;
+      const household = options.household ? house.status === 'fulfilled' ? house.value : null : undefined;
+      return summarizeForecast(date, publication, household,
+        runtime?.status === 'available' && calculatedAt === publication?.calculatedAt);
+    }));
+    return c.json({ timeZone, days });
   });
   for (const path of ['/api/forecast', '/api/forecast/today']) {
     app.get(path, async c => {

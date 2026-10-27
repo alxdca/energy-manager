@@ -127,6 +127,72 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
   }
 }
 
+export function renderWeekForecast(data, body) {
+  const number = new Intl.NumberFormat('fr-CH', { maximumFractionDigits: 1 });
+  const dateFormat = new Intl.DateTimeFormat('fr-CH', { timeZone: 'Europe/Zurich', weekday: 'short', day: 'numeric', month: 'short' });
+  const fragment = document.createDocumentFragment();
+  const days = data?.days;
+  if (!Array.isArray(days) || days.length !== 7 || days.some((day, index) => !validHistoryDate(day?.date)
+    || index > 0 && day.date !== shiftHistoryDate(days[index - 1].date, 1))) throw new Error('Prévisions invalides.');
+  for (const day of days) {
+    const row = document.createElement('tr');
+    const heading = document.createElement('th'); heading.scope = 'row';
+    const link = document.createElement('a'); link.href = `/donnees?date=${encodeURIComponent(day.date)}`;
+    link.textContent = dateFormat.format(new Date(`${day.date}T12:00:00Z`));
+    heading.append(link); row.append(heading);
+    for (const key of ['productionKwh', 'consumptionKwh', 'batteryEndSocPercent', 'batteryMinSocPercent']) {
+      const cell = document.createElement('td'), value = day[key];
+      const known = typeof value === 'number' && Number.isFinite(value) && value >= 0 && (!key.startsWith('battery') || value <= 100);
+      cell.textContent = known ? `≈ ${number.format(value)}` : '—';
+      if (key === 'productionKwh' && day.solarStatus === 'stale') {
+        cell.dataset.stale = 'true'; cell.title = 'Prévision solaire conservée · à actualiser';
+      }
+      if (key === 'consumptionKwh') cell.title = ({ configured_baseline: 'Base configurée', recent_average: 'Moyenne récente',
+        measured_history: 'Profil appris', mixed: 'Profil complété' })[day.consumptionSource] ?? 'Consommation indisponible';
+      row.append(cell);
+    }
+    fragment.append(row);
+  }
+  body.replaceChildren(fragment);
+}
+
+function initializeWeekForecast() {
+  const body = document.getElementById('week-days');
+  if (!body) return;
+  const status = document.getElementById('week-status'), button = document.getElementById('week-refresh');
+  let controller = null, timer;
+  async function refresh() {
+    if (document.hidden || controller) return;
+    clearTimeout(timer);
+    const current = new AbortController(); controller = current; button.disabled = true;
+    try {
+      const data = await requestHistoryJson('/api/forecast/week', current.signal);
+      if (current.signal.aborted) return;
+      renderWeekForecast(data, body);
+      status.textContent = data.days.some(day => [day.productionKwh, day.consumptionKwh, day.batteryEndSocPercent].some(value => value === null))
+        ? 'Certaines prévisions sont indisponibles.' : 'Prévisions enregistrées · Europe/Zurich';
+    } catch {
+      if (!current.signal.aborted) {
+        body.replaceChildren(); status.textContent = 'Prévisions indisponibles. Réessayez avec Actualiser.';
+      }
+    } finally {
+      if (controller === current) {
+        controller = null; button.disabled = false;
+        if (!document.hidden) timer = setTimeout(refresh, 60000);
+      }
+    }
+  }
+  const pause = () => {
+    clearTimeout(timer); const current = controller; controller = null; current?.abort(); button.disabled = false;
+  };
+  button.addEventListener('click', refresh);
+  window.addEventListener('household-forecast-updated', refresh);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); else void refresh(); });
+  window.addEventListener('pagehide', pause);
+  window.addEventListener('pageshow', () => { void refresh(); });
+  void refresh();
+}
+
 function initializeHistory() {
   const byId = id => document.getElementById(`history-${id}`);
   const elements = Object.fromEntries(['date', 'aggregation', 'date-form', 'previous', 'next', 'today', 'load', 'selection-count', 'field-groups',
@@ -325,4 +391,4 @@ function initializeHistory() {
   void loadDate(validHistoryDate(requestedDate ?? '') ? requestedDate : todayInZurich(), true, true);
 }
 
-if (typeof document !== 'undefined' && document.getElementById('history-view')) initializeHistory();
+if (typeof document !== 'undefined' && document.getElementById('history-view')) { initializeHistory(); initializeWeekForecast(); }

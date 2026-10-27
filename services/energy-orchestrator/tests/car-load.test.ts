@@ -303,3 +303,13 @@ test('night planning subtracts supplied stored energy instead of preserving an o
   assert.equal(baseline.unmetKwh, 0);
   assert.ok(result.unmetKwh > 7);
 });
+
+test('car contexts cover the complete weekly forecast plus its planning lookahead', () => {
+  const data = forecast();
+  data.carChargingContext = Array.from({ length: 9 }, (_, offset) => ({ status: 'inactive' as const,
+    date: new Date(Date.parse(`${data.date}T00:00:00Z`) + offset * 86400000).toISOString().slice(0, 10),
+    calculatedAt: null, socObservedAt: null, slots: [] }));
+  assert.equal(validCarLoad(data), true);
+  data.carChargingContext.push({ ...data.carChargingContext[8], date: '2026-12-01' });
+  assert.equal(validCarLoad(data), false);
+});

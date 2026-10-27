@@ -249,13 +249,14 @@ function learnWeather(days: Day[], weather?: HouseholdWeather): { calibration: W
 
 export function trainHouseholdModel(input: { id: string; at: Date; observations: HouseholdObservation[]; weather?: HouseholdWeather }): HouseholdModel {
   const today = getLocalDate(input.at), from = shiftDate(today, -84);
-  const days = prepare(input.observations, input.at).filter(d => d.date >= from && d.date < today);
+  // Finalized readings from the current partial day contribute only to their observed slots.
+  const days = prepare(input.observations, input.at).filter(d => d.date >= from && d.date <= today);
   const weather = input.weather?.kind === 'historical' && Date.parse(input.weather.availableAt) <= input.at.getTime()
     && Date.parse(input.weather.fetchedAt) <= input.at.getTime() ? input.weather : undefined;
   const learned = learnWeather(days, weather);
   return { id: input.id, version: householdModelVersion, trainedAt: input.at.toISOString(), trainingDate: today,
     validUntil: getCalendarDayBounds(new Date(`${shiftDate(today, 1)}T00:00:00Z`)).start.toISOString(),
-    scope: 'household_total', mode: 'observation', training: { from, to: shiftDate(today, -1), usableDays: days.length,
+    scope: 'household_total', mode: 'observation', training: { from, to: today, usableDays: days.length,
       completeSamplingDays: days.filter(d => d.complete).length, observations: days.reduce((n, d) => n + d.samples.length, 0),
       weatherDays: learned.days, halfLifeDays: 14, originalStepMinutes: 15, alignment: 'nominal_quarter_approximation' },
     profiles: profiles(days, today), weatherProfiles: learned.calibration ? profiles(days, today, weather, learned.calibration) : {},

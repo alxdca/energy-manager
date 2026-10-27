@@ -11,7 +11,7 @@ const script = readFileSync(new URL('../public/forecast.js', import.meta.url), '
 const decimal = (value: number) => value.toLocaleString('fr-CH', { maximumFractionDigits: 1 });
 const integer = (value: number) => value.toLocaleString('fr-CH', { maximumFractionDigits: 0 });
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const panelIds = ['solar-forecast', 'forecast-date', 'forecast-energy', 'forecast-location', 'forecast-updated', 'forecast-status', 'forecast-consumption', 'forecast-household-status'];
+const panelIds = ['solar-forecast', 'forecast-date', 'forecast-energy', 'forecast-location', 'forecast-updated', 'forecast-status', 'forecast-consumption'];
 
 class Element {
   textContent = '';
@@ -678,17 +678,15 @@ test('learned household totals use their full-day slots independently of solar r
   assert.equal(b.get('forecast-consumption').textContent, '—');
 });
 
-test('household fallbacks display complete totals and clearly identify baseline or recent averages', async () => {
+test('household fallbacks display complete totals for baseline and recent averages', async () => {
   const at = new Date('2026-10-24T12:00:00Z'), b = browser();
   const raw = predictHousehold({ date: '2026-10-24', at, model: null });
   const source = committedForecast(futureSource(), at);
   const baseline = applyHouseholdFallback(raw, [], { baselinePowerW: 1000, windowHours: 24 });
   await b.complete({ ...source, householdForecast: baseline });
   assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(24)}`);
-  assert.match(b.get('forecast-household-status').textContent, /Base configurée/);
   b.fireTimer(10000);
   const samples = Array.from({ length: 4 }, (_, i) => ({ at: new Date(at.getTime() - i * 900000 - 30000).toISOString(), value: 500 }));
   await b.complete({ ...source, householdForecast: applyHouseholdFallback(raw, samples, { baselinePowerW: 1000, windowHours: 24 }) });
   assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(48)}`);
-  assert.match(b.get('forecast-household-status').textContent, /Moyenne récente sur 24 h/);
 });

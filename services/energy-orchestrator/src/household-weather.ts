@@ -15,7 +15,8 @@ export function createHouseholdWeather(options: {
   const attempts = new Map<HouseholdWeather['kind'], number>();
   const pending = new Map<HouseholdWeather['kind'], Promise<HouseholdWeather | undefined>>();
   async function refresh(kind: HouseholdWeather['kind'], force: boolean): Promise<HouseholdWeather | undefined> {
-    const config = options.config!, at = now(), date = getLocalDate(at);
+    const config = kind === 'forecast' ? { ...options.config!, weatherModel: 'best_match' as const } : options.config!;
+    const at = now(), date = getLocalDate(at);
     if (!cache.has(kind)) {
       const saved = await options.archive.readWeather(kind, config, at);
       if (saved) cache.set(kind, saved);
@@ -28,12 +29,12 @@ export function createHouseholdWeather(options: {
     attempts.set(kind, at.getTime());
     try {
       const historical = kind === 'historical';
-      const model = historical ? 'era5_land' : config.weatherModel ?? 'best_match';
+      const model = historical ? 'era5_land' : 'best_match';
       const url = new URL(historical ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast');
       url.search = new URLSearchParams({ latitude: String(config.latitude), longitude: String(config.longitude),
         hourly: 'temperature_2m', timezone: 'GMT', timeformat: 'unixtime',
         // Reanalysis has a publication lag. Boundary days permit interpolation through local midnight.
-        start_date: shiftDate(date, historical ? -85 : -1), end_date: shiftDate(date, historical ? -6 : 3),
+        start_date: shiftDate(date, historical ? -85 : -1), end_date: shiftDate(date, historical ? -6 : 9),
         ...(model === 'best_match' ? {} : { models: model }) }).toString();
       const response = await request(url, { redirect: 'error', signal: AbortSignal.timeout(8000) });
       if (!response.ok) throw new Error('Weather provider unavailable.');

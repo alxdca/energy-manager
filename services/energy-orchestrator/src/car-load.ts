@@ -1,3 +1,4 @@
+import { forecastDayOffsets } from './forecast-horizon.js';
 import { solarIntervals } from './solar-intervals.js';
 import type { SolarForecast } from './forecast.js';
 import { consumptionIntervals, type ConsumptionForecast } from './consumption.js';
@@ -55,7 +56,7 @@ export function validCarCharging(value: CarChargingForecast): boolean {
 
 function channels(input: CarInput): Map<string, CarChargingForecast> | null {
   const values = input.carChargingContext ?? [];
-  if (!Array.isArray(values) || values.length > 4) return null;
+  if (!Array.isArray(values) || values.length > forecastDayOffsets.length) return null;
   const result = new Map<string, CarChargingForecast>();
   for (const value of values) {
     if (!validCarCharging(value) || result.has(value.date)) return null;

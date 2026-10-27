@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getCarTarget, getSchedule } from '../src/policy.js';
 
+test('reused calendar boundaries remain independent dates across DST and cache eviction', async () => {
+  const { getCalendarDayBounds } = await import('../src/policy.js');
+  const day = new Date('2026-10-25T00:00:00Z');
+  const original = getCalendarDayBounds(day);
+  assert.equal(original.end.getTime() - original.start.getTime(), 25 * 3600000);
+  original.start.setTime(0); original.end.setTime(0);
+  for (let offset = 0; offset < 600; offset++) getCalendarDayBounds(new Date(Date.UTC(2026, 0, 1 + offset)));
+  const restored = getCalendarDayBounds(day);
+  assert.equal(restored.start.toISOString(), '2026-10-24T22:00:00.000Z');
+  assert.equal(restored.end.toISOString(), '2026-10-25T23:00:00.000Z');
+});
+
 // These ISO strings carry Zurich's winter offset explicitly.
 const winter = (time: string) => new Date(`2026-01-15T${time}+01:00`);
 const cases = [

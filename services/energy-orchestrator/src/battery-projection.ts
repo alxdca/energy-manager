@@ -1,3 +1,4 @@
+import { forecastDays } from './forecast-horizon.js';
 import { solarIntervals } from './solar-intervals.js';
 import { consumptionIntervals } from './consumption.js';
 import { batteryChargeAllowanceKw } from './site-power.js';
@@ -109,18 +110,21 @@ export function projectBatterySoc(
 
   const currentDate = getLocalDate(now);
   const nextDate = new Date(Date.parse(`${currentDate}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
-  const lookaheadDate = new Date(Date.parse(`${currentDate}T00:00:00Z`) + 2 * 86_400_000).toISOString().slice(0, 10);
+  const lookaheadDate = new Date(Date.parse(`${currentDate}T00:00:00Z`) + (forecastDays + 1) * 86_400_000).toISOString().slice(0, 10);
   const days = new Map<string, EnergyForecast>();
   for (const forecast of forecasts) {
-    if ((forecast.date === currentDate || forecast.date === nextDate || forecast.date === lookaheadDate) && validForecast(forecast, timestamp)
+    if ((forecast.date >= currentDate && forecast.date <= lookaheadDate) && validForecast(forecast, timestamp)
       && !days.has(forecast.date)) days.set(forecast.date, forecast);
   }
   if (!days.has(currentDate)) return unavailable('forecast_unavailable');
   const production = new Map([...days].map(([date, forecast]) => [date, solarIntervals(forecast)!]));
   const consumption = new Map([...days].map(([date, forecast]) => [date, consumptionIntervals(forecast.consumption)!]));
-  // The third day funds tomorrow's 23:05 planner decision only, never a third chart day.
+  // Default callers retain the two-day view; the scheduled publication requests the full week.
+  // The extra lookahead day funds the final night’s planner decision.
   const finalDate = days.has(nextDate) ? nextDate : currentDate;
-  const horizon = Math.min(getCalendarDayBounds(new Date(`${finalDate}T00:00:00Z`)).end.getTime(), until?.getTime() ?? Infinity);
+  const maximumEnd = getCalendarDayBounds(new Date(Date.parse(`${currentDate}T00:00:00Z`) + forecastDays * 86_400_000)).end.getTime();
+  const horizon = until ? Math.min(maximumEnd, until.getTime())
+    : getCalendarDayBounds(new Date(`${finalDate}T00:00:00Z`)).end.getTime();
   const capacity = config.socCapacityKwh;
   const reserve = reservePercent / 100 * capacity;
   const maximum = maximumPercent / 100 * capacity;

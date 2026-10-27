@@ -1,10 +1,11 @@
+import { forecastDayOffsets, forecastDays, type ForecastDayOffset } from './forecast-horizon.js';
 import type { AutomationConfig, EnergyForecast } from './automation-plan.js';
 import type { AutomationControllerState, AutomationStatus } from './automation.js';
 import { projectBatterySoc, type BatteryProjection } from './battery-projection.js';
 import { estimateConsumption, type ConsumptionConfig, type ConsumptionForecast } from './consumption.js';
 import { emptySolarForecast, hasUsableForecast, type ForecastConfig, type SolarForecast } from './forecast.js';
 import { buildPlannerDetails, getUpcomingHighTariff, type PlannerDetails } from './planner-details.js';
-import { getLocalDate } from './policy.js';
+import { getCalendarDayBounds, getLocalDate } from './policy.js';
 import type { Telemetry } from './status.js';
 import type { BatteryChargeEstimate } from './charge-estimate.js';
 import type { CarChargingForecast } from './car-types.js';
@@ -29,7 +30,7 @@ interface EstimateOptions {
   forecastConfig: ForecastConfig | null;
   consumption: ConsumptionConfig;
   automationConfig: AutomationConfig;
-  readSolar(offset: 0 | 1 | 2): Promise<SolarForecast>;
+  readSolar(offset: ForecastDayOffset): Promise<SolarForecast>;
   readTelemetry(): Promise<Telemetry>;
   readControl(): Promise<AutomationControllerState & { automated?: boolean; chargeEstimate?: BatteryChargeEstimate }>;
   readAutomation(): AutomationStatus;
@@ -100,12 +101,12 @@ export function createEstimateService(options: EstimateOptions) {
   async function calculate(at: Date) {
     try { await options.refreshHousehold?.(); } catch (error) { report(error); }
     const generation = batteryGeneration;
-    const dates = ([0, 1, 2] as const).map(offset => dateAt(at, offset));
+    const dates = forecastDayOffsets.map(offset => dateAt(at, offset));
     const solarHour = Math.floor(at.getTime() / hourMs);
     const refreshSolar = lastSolarHour === null || (Math.floor(at.getTime() / quarterMs) % 4 === 0 && solarHour !== lastSolarHour);
     let nextSolar = rawSolar;
     if (refreshSolar) {
-      const values = await Promise.all(([0, 1, 2] as const).map(async (offset) => {
+      const values = await Promise.all(forecastDayOffsets.map(async (offset) => {
         let next: SolarForecast;
         try {
           const value = await options.readSolar(offset);
@@ -191,7 +192,8 @@ export function createEstimateService(options: EstimateOptions) {
     const capturedAt = now();
     const forecasts = [...inputs.values()];
     const automation = options.readAutomation();
-    const projection = projectBatterySoc(capturedAt, telemetry, control, automation, forecasts, options.automationConfig);
+    const projection = projectBatterySoc(capturedAt, telemetry, control, automation, forecasts, options.automationConfig,
+      getCalendarDayBounds(new Date(`${dateAt(capturedAt, forecastDays)}T00:00:00Z`)).end);
     const primary = nextInputs.get(getUpcomingHighTariff(capturedAt).date) ?? forecasts[0];
     const planner = buildPlannerDetails(capturedAt, telemetry, control, automation, primary, options.automationConfig, forecasts);
     const nextPlanner = planner.calculation?.charging.allowed

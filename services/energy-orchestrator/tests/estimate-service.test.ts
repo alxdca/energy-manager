@@ -1,3 +1,4 @@
+import { forecastDayOffsets, type ForecastDayOffset } from '../src/forecast-horizon.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createEstimateService } from '../src/estimate-service.js';
@@ -26,9 +27,9 @@ test('consumption history receives quarter-hour batches with the shared retained
   h.setTime('2026-10-25T12:30:00Z');
   await h.service.recalculate();
   assert.equal(captures.length, 3);
-  assert.equal(h.calls.solar.length, 3, 'the three target dates share the startup weather refresh');
+  assert.equal(h.calls.solar.length, 9, 'all target dates share the startup weather refresh');
   assert.deepEqual(captures.map(value => value.at), ['2026-10-25T12:07:00.000Z', '2026-10-25T12:15:00.000Z', '2026-10-25T12:30:00.000Z']);
-  assert.ok(captures.every(capture => capture.forecasts.length === 3 && capture.forecasts.every(value => value.consumption.hourly.length > 0)));
+  assert.ok(captures.every(capture => capture.forecasts.length === 9 && capture.forecasts.every(value => value.consumption.hourly.length > 0)));
   assert.equal(captures[2].forecasts[0].fetchedAt, captures[0].forecasts[0].fetchedAt);
   h.state.solarLevel = 9;
   h.setTime('2026-10-25T13:00:00Z');
@@ -107,7 +108,7 @@ function fixture(origin = '2026-10-25T12:07:00Z', prepareCarForecasts?: Paramete
   const control: AutomationControllerState & { automated?: boolean; chargeEstimate?: BatteryChargeEstimate } = { available: true, mode: 'auto', powerKw: null,
     targetSocPercent: null, limits: { maxPowerKw: 6, maxSocPercent: 100, reserveSocPercent: 5 },
     revertTimeoutSeconds: 30, error: null };
-  const calls = { solar: [] as Array<{ offset: 0 | 1 | 2; at: string }>, evaluate: 0, telemetry: 0, control: 0, publish: 0 };
+  const calls = { solar: [] as Array<{ offset: ForecastDayOffset; at: string }>, evaluate: 0, telemetry: 0, control: 0, publish: 0 };
   const errors: unknown[] = [];
   const sourceObjects: SolarForecast[] = [];
   const records: Array<{ projection: BatteryProjection; at: string }> = [];
@@ -164,7 +165,7 @@ function fixture(origin = '2026-10-25T12:07:00Z', prepareCarForecasts?: Paramete
     },
     onError: error => { errors.push(error); },
   });
-  const forecast = (offset: 0 | 1) => structuredClone(published?.forecasts.find(value => value.date === date(offset)) ?? null);
+  const forecast = (offset: ForecastDayOffset) => structuredClone(published?.forecasts.find(value => value.date === date(offset)) ?? null);
   return { service, forecast, calls, state, sourceObjects, errors, records, gates, consumption, date, automation, control,
     now, setTime(value: string) { clock = new Date(value); } };
 }
@@ -201,7 +202,7 @@ test('car allocation is prepared before battery evaluation and published once wi
   close(firstHousehold.estimatedConsumptionKwh, 25);
   assert.equal(firstHousehold.excludesCar, true);
   assert.equal(h.forecast(0)!.carCharging!.slots.length, 1);
-  assert.equal(h.service.planningForecast(0).carChargingContext!.length, 3);
+  assert.equal(h.service.planningForecast(0).carChargingContext!.length, 9);
   for (let index = 0; index < 3; index++) { h.forecast(0); h.service.planner(); h.service.projection(); }
   assert.equal(prepared, 1);
   h.setTime('2026-10-25T12:15:00Z');
@@ -286,14 +287,14 @@ test('quarter batches refresh household and battery estimates while solar is fet
     await h.service.recalculate();
     assert.equal(h.calls.evaluate, index + 2);
     assert.equal(h.calls.publish, index + 2);
-    assert.equal(h.calls.solar.length, time === '13:00' ? 6 : 3);
+    assert.equal(h.calls.solar.length, time === '13:00' ? 18 : 9);
     assert.equal(h.service.projection().points[0].socPercent, h.state.soc);
     const nextHour = h.forecast(0)!.consumption!.hourly.find(hour => hour.start === '2026-10-25T14:00:00.000Z')!;
     close(nextHour.estimatedConsumptionKwh, h.consumption.baselinePowerW / 1000);
     assert.equal(h.forecast(0)!.fetchedAt, time === '13:00' ? h.now().toISOString() : initialSolar);
   }
   assert.deepEqual(h.calls.solar.map(call => call.at), [
-    ...Array(3).fill('2026-10-25T12:07:00.000Z'), ...Array(3).fill('2026-10-25T13:00:00.000Z'),
+    ...Array(9).fill('2026-10-25T12:07:00.000Z'), ...Array(9).fill('2026-10-25T13:00:00.000Z'),
   ]);
 });
 
@@ -318,7 +319,7 @@ test('solar sources refresh hourly while native profiles and consumption capture
       assert.equal(forecast.fetchedAt, before[offset].fetchedAt);
     }
     assert.equal(solarCaptures.length, index + 2);
-    assert.equal(h.calls.solar.length, 3);
+    assert.equal(h.calls.solar.length, 9);
     assert.equal(energyCaptures.length, index + 2);
     assert.equal(energyCaptures.at(-1)![0].fetchedAt, before[0].fetchedAt);
     assert.deepEqual(energyCaptures.at(-1)![0].hourly, solarCaptures[0][0].hourly);
@@ -328,7 +329,7 @@ test('solar sources refresh hourly while native profiles and consumption capture
   await h.service.recalculate();
   assert.equal(solarCaptures.length, 5);
   assert.equal(energyCaptures.length, 5);
-  assert.equal(h.calls.solar.length, 6);
+  assert.equal(h.calls.solar.length, 18);
   assert.equal(h.forecast(0)!.fetchedAt, h.now().toISOString());
   assert.equal(h.forecast(0)!.hourly!.find(hour => hour.start === '2026-10-25T13:00:00.000Z')!.estimatedProductionKwh, 7.5);
 });
@@ -350,13 +351,13 @@ test('solar archival captures the published estimates without revising elapsed h
   await h.service.recalculate();
   assert.equal(captures.length, 5);
   assert.deepEqual(captures.map(capture => capture.at), ['2026-10-25T12:07:00.000Z', '2026-10-25T12:15:00.000Z', '2026-10-25T12:30:00.000Z', '2026-10-25T12:45:00.000Z', '2026-10-25T13:00:00.000Z']);
-  assert.deepEqual(captures[4].forecasts.map(forecast => forecast.date), ['2026-10-25', '2026-10-26', '2026-10-27']);
+  assert.deepEqual(captures[4].forecasts.map(forecast => forecast.date), forecastDayOffsets.map(offset => h.date(offset)));
   const elapsed = '2026-10-25T09:00:00.000Z';
   assert.equal(captures[4].forecasts[0].hourly!.find(hour => hour.start === elapsed)!.estimatedProductionKwh, 3);
   assert.equal(h.forecast(0)!.hourly!.find(hour => hour.start === elapsed)!.estimatedProductionKwh, 3);
   assert.deepEqual(h.service.planningForecast(0).hourly, h.forecast(0)!.hourly);
   assert.deepEqual(captures[4].forecasts[0].hourly, h.forecast(0)!.hourly);
-  assert.equal(h.sourceObjects[3].hourly!.find(hour => hour.start === elapsed)!.estimatedProductionKwh, 9);
+  assert.equal(h.sourceObjects[forecastDayOffsets.length].hourly!.find(hour => hour.start === elapsed)!.estimatedProductionKwh, 9);
   assert.equal(captures[0].forecasts[0].hourly!.find(hour => hour.start === elapsed)!.estimatedProductionKwh, 3);
   h.forecast(0); h.service.planningForecast(0); h.service.planner();
   assert.equal(captures.length, 5);
@@ -381,11 +382,11 @@ test('startup restores started solar quarters from history and leaves only futur
   assert.equal(value(13), 3, 'future hours use the new forecast');
   assert.deepEqual(h.service.planningForecast(0).hourly, today.hourly);
   close(today.estimatedProductionKwh!, Math.round(today.hourly!.reduce((sum, hour) => sum + hour.estimatedProductionKwh, 0) * 10) / 10);
-  assert.deepEqual(reads, ['2026-10-25', '2026-10-26', '2026-10-27']);
+  assert.deepEqual(reads, forecastDayOffsets.map(offset => h.date(offset)));
   h.setTime('2026-10-25T13:00:00Z');
   h.state.solarLevel = 9;
   await h.service.recalculate();
-  assert.deepEqual(reads, ['2026-10-25', '2026-10-26', '2026-10-27'], 'later batches retain the restored snapshot');
+  assert.deepEqual(reads, forecastDayOffsets.map(offset => h.date(offset)), 'later batches retain the restored snapshot');
   assert.equal(h.forecast(0)!.hourly!.find(row => row.start === '2026-10-25T11:00:00.000Z')!.estimatedProductionKwh, 4);
 });
 
@@ -411,7 +412,7 @@ test('failed history restoration does not publish revised past values and can re
   await assert.rejects(h.service.recalculate(), failure);
   assert.equal(h.forecast(0), null);
   await h.service.recalculate();
-  assert.equal(attempts, 6);
+  assert.equal(attempts, 18);
   assert.equal(h.forecast(0)!.status, 'online');
 });
 
@@ -431,7 +432,7 @@ test('weather recovery after an offline startup restores saved completed hours b
   h.state.failSolar = false;
   h.setTime('2026-10-25T13:00:00Z');
   await h.service.recalculate();
-  assert.equal(reads, 3);
+  assert.equal(reads, 9);
   assert.equal(h.forecast(0)!.hourly!.find(hour => hour.start === '2026-10-25T12:00:00.000Z')!.estimatedProductionKwh, 1);
 });
 
@@ -467,7 +468,7 @@ test('publication includes unavailable solar and preserves retained source times
   assert.ok(captures[2].every(forecast => forecast.status === 'stale' && forecast.fetchedAt === '2026-10-25T13:00:00.000Z'));
 });
 
-test('each projection covers the remaining current day and all of tomorrow including its final planning hour', async () => {
+test('each projection carries SOC through seven future days including the final night planning hour', async () => {
   const h = fixture('2026-10-25T18:15:00Z');
   await h.service.recalculate();
   const projection = h.service.projection();
@@ -475,11 +476,11 @@ test('each projection covers the remaining current day and all of tomorrow inclu
   assert.equal(projection.reason, null);
   assert.equal(projection.points[0].at, h.now().toISOString());
   const todayEnd = getCalendarDayBounds(new Date('2026-10-25T00:00:00Z')).end.toISOString();
-  const tomorrowEnd = getCalendarDayBounds(new Date('2026-10-26T00:00:00Z')).end.toISOString();
+  const weekEnd = getCalendarDayBounds(new Date('2026-11-01T00:00:00Z')).end.toISOString();
   assert.ok(projection.points.some(point => point.at === todayEnd));
-  assert.equal(projection.points.at(-1)!.at, tomorrowEnd);
-  assert.ok(projection.points.every(point => point.at >= h.now().toISOString() && point.at <= tomorrowEnd));
-  assert.deepEqual(h.calls.solar.map(call => call.offset), [0, 1, 2]);
+  assert.equal(projection.points.at(-1)!.at, weekEnd);
+  assert.ok(projection.points.every(point => point.at >= h.now().toISOString() && point.at <= weekEnd));
+  assert.deepEqual(h.calls.solar.map(call => call.offset), [...forecastDayOffsets]);
 });
 
 test('a batch is published atomically after automation, live capture and archival have completed', async () => {
@@ -539,22 +540,22 @@ test('failed hourly solar requests are not retried at the following three quarte
   h.state.failSolar = true;
   h.setTime('2026-10-25T13:00:00Z');
   await h.service.recalculate();
-  assert.equal(h.calls.solar.length, 6);
-  assert.equal(h.errors.length, 3);
+  assert.equal(h.calls.solar.length, 18);
+  assert.equal(h.errors.length, 9);
   assert.equal(h.forecast(0)!.status, 'stale');
   assert.equal(h.forecast(0)!.fetchedAt, previous.fetchedAt);
   assert.ok(h.forecast(0)!.error);
   for (const time of ['13:15', '13:30', '13:45']) {
     h.setTime(`2026-10-25T${time}:00Z`);
     await h.service.recalculate();
-    assert.equal(h.calls.solar.length, 6);
+    assert.equal(h.calls.solar.length, 18);
     assert.equal(h.forecast(0)!.estimatedProductionKwh, previous.estimatedProductionKwh);
     assert.equal(h.service.projection().status, 'available');
   }
   h.state.failSolar = false;
   h.setTime('2026-10-25T14:00:00Z');
   await h.service.recalculate();
-  assert.equal(h.calls.solar.length, 9);
+  assert.equal(h.calls.solar.length, 27);
   assert.equal(h.forecast(0)!.status, 'online');
   assert.equal(h.service.projection().status, 'available');
 });
@@ -688,11 +689,11 @@ test('consumption startup restores every started quarter, including zero, and re
   assert.deepEqual(today.quarterHourly!.filter(point => point.start.startsWith('2026-10-25T12:')).map(point => point.estimatedConsumptionKwh), [0, .5, .5, 1]);
   close(today.hourly.find(hour => hour.start === '2026-10-25T11:00:00.000Z')!.estimatedConsumptionKwh, 1.5);
   assert.deepEqual(h.service.planningForecast(0).consumption, today);
-  assert.deepEqual(reads, ['2026-10-25', '2026-10-26', '2026-10-27']);
+  assert.deepEqual(reads, forecastDayOffsets.map(offset => h.date(offset)));
   h.setTime('2026-10-25T13:00:00Z'); h.consumption.baselinePowerW = 8000;
   await h.service.recalculate();
   close(h.forecast(0)!.consumption!.hourly.find(hour => hour.start === '2026-10-25T12:00:00.000Z')!.estimatedConsumptionKwh, 2);
-  assert.deepEqual(reads, ['2026-10-25', '2026-10-26', '2026-10-27']);
+  assert.deepEqual(reads, forecastDayOffsets.map(offset => h.date(offset)));
 });
 
 test('consumption restoration failures keep the previous published batch and can retry safely', async () => {
@@ -705,7 +706,7 @@ test('consumption restoration failures keep the previous published batch and can
   await assert.rejects(h.service.recalculate(), failure);
   assert.equal(h.forecast(0), null);
   await h.service.recalculate();
-  assert.equal(attempts, 6);
+  assert.equal(attempts, 18);
   assert.ok(h.forecast(0)!.consumption!.quarterHourly!.length);
 });
 
@@ -794,7 +795,8 @@ test('Zurich midnight and DST batches retain correct calendar dates, interval co
     assert.equal(h.forecast(1)!.date, nextDate);
     assert.equal(h.forecast(0)!.hourly!.length, count);
     assert.equal(h.forecast(0)!.consumption!.dayHours, count);
-    assert.equal(h.service.projection().points.at(-1)!.at, getCalendarDayBounds(new Date(`${nextDate}T00:00:00Z`)).end.toISOString());
+    const finalDay = new Date(Date.parse(`${currentDate}T00:00:00Z`) + 7 * 86_400_000);
+    assert.equal(h.service.projection().points.at(-1)!.at, getCalendarDayBounds(finalDay).end.toISOString());
   }
 });
 
@@ -806,7 +808,7 @@ test('a midnight batch maps the former tomorrow to today and exposes a newly ref
   assert.equal(h.forecast(0)!.date, '2026-10-26');
   assert.equal(h.forecast(1)!.date, '2026-10-27');
   assert.equal(h.forecast(0)!.hourly![0].start, '2026-10-25T23:00:00.000Z');
-  assert.equal(h.calls.solar.length, 6);
+  assert.equal(h.calls.solar.length, 18);
 });
 
 test('returned public and controller snapshots cannot mutate the published batch', async () => {
@@ -956,14 +958,14 @@ test('independent solar quarters refresh hourly and freeze started quarters in d
     h.setTime(`2026-10-25T${time}:00Z`); await h.service.recalculate();
     assert.deepEqual(h.forecast(0)!.quarterHourly, before.quarterHourly);
   }
-  assert.equal(h.calls.solar.length, 3);
+  assert.equal(h.calls.solar.length, 9);
   assert.equal(captures.length, 4);
   h.setTime('2026-10-25T13:00:00Z'); await h.service.recalculate();
   const after = h.forecast(0)!;
   assert.deepEqual(hour(after, '2026-10-25T12:00:00.000Z'), [.3, .6, .9, 1.2]);
   const next = hour(after, '2026-10-25T13:00:00.000Z');
   for (const [index, value] of [.3, 1.8, 2.7, 3.6].entries()) close(next[index], value);
-  assert.equal(h.calls.solar.length, 6);
+  assert.equal(h.calls.solar.length, 18);
   assert.deepEqual(captures[4][0].quarterHourly, after.quarterHourly);
   close(after.estimatedProductionKwh!, Math.round(after.quarterHourly!.reduce((sum, point) => sum + point.estimatedProductionKwh, 0) * 10) / 10);
 });

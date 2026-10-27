@@ -7,9 +7,9 @@ import { createApi } from '../src/api.js';
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 const tick = () => new Promise(resolve => setImmediate(resolve));
-function fixture() {
+function fixture(initialModel: HouseholdModel | null = null) {
   let at = new Date('2026-10-27T11:00:00Z');
-  let saved: HouseholdModel | null = null, failRead = false, trainingGate: ReturnType<typeof deferred> | undefined;
+  let saved = initialModel, failRead = false, trainingGate: ReturnType<typeof deferred> | undefined;
   const models: HouseholdTrainingRun[] = [], forecasts = new Map<string, HouseholdForecast>();
   const observations: HouseholdObservation[] = householdDaySlots('2026-10-26').map(s => ({ at: new Date(Date.parse(s.end) - 30000).toISOString(), value: 250 }));
   let reads = 0, finalized = 0, weatherReads = 0;
@@ -36,7 +36,7 @@ function fixture() {
 
 test('quarter-hour updates reuse trained profiles; a new Zurich day trains once', async () => {
   const f = fixture(); await f.service.refresh();
-  assert.equal(f.models.length, 1); assert.equal(f.forecasts.size, 3);
+  assert.equal(f.models.length, 1); assert.equal(f.forecasts.size, 9);
   const id = f.service.status().modelId;
   f.setTime('2026-10-27T11:15:00Z'); await f.service.refresh();
   f.setTime('2026-10-27T11:30:00Z'); await f.service.refresh();
@@ -44,6 +44,72 @@ test('quarter-hour updates reuse trained profiles; a new Zurich day trains once'
   assert.equal(f.forecasts.get('2026-10-28')!.modelId, id);
   f.setTime('2026-10-27T23:00:00Z'); await f.service.refresh();
   assert.equal(f.models.length, 2); assert.notEqual(f.service.status().modelId, id);
+});
+
+test('manual learning incorporates today’s available household readings into the saved forecasts', async () => {
+  const f = fixture(); await f.service.refresh();
+  f.observations.push({ at: '2026-10-27T07:14:30Z', value: 1000 },
+    { at: '2026-10-27T11:15:30Z', value: 999999 });
+  await f.service.train();
+  const trained = f.models.at(-1)!.model;
+  assert.equal(trained.training.to, '2026-10-27');
+  assert.equal(trained.training.observations, 97);
+  assert.equal(trained.training.completeSamplingDays, 1);
+  const slot = f.forecasts.get('2026-10-28')!.slots.find(s => s.start === '2026-10-28T07:00:00.000Z')!;
+  assert.equal(slot.observations, 2);
+  const weight = 2 ** (-1 / 14);
+  assert.ok(Math.abs(slot.estimatedConsumptionKwh! - (1 + .25 * weight) / (1 + weight)) < 1e-8);
+});
+
+test('saved models from before current-day learning rebuild once, then reuse the updated model', async () => {
+  const original = fixture(); await original.service.refresh();
+  const legacy = structuredClone(original.models[0].model);
+  legacy.training.to = '2026-10-26';
+  const upgraded = fixture(legacy); await upgraded.service.refresh(); await upgraded.service.refresh();
+  assert.equal(upgraded.models.length, 1);
+  assert.equal(upgraded.models[0].model.training.to, '2026-10-27');
+  const restarted = fixture(upgraded.models[0].model); await restarted.service.refresh();
+  assert.equal(restarted.models.length, 0);
+});
+
+test('training freezes its cutoff after weather and finalization, including across Zurich midnight and slow history I/O', async () => {
+  let clock = new Date('2026-10-27T22:59:59Z');
+  const cutoff = '2026-10-27T23:15:00.000Z';
+  const observations = [{ at: '2026-10-27T22:59:30Z', value: 250 },
+    { at: '2026-10-27T23:14:30Z', value: 500 }, { at: '2026-10-27T23:29:30Z', value: 999999 }];
+  const models: HouseholdTrainingRun[] = [];
+  const reads: Array<{ start: string; end: string; availableAt: string }> = [];
+  const service = createHouseholdService({ now: () => new Date(clock),
+    finalizeMeasurements: async () => {
+      assert.equal(clock.toISOString(), '2026-10-27T23:00:00.000Z');
+      clock = new Date(cutoff);
+    },
+    weather: { async read(kind) {
+      if (kind !== 'historical') return undefined;
+      clock = new Date('2026-10-27T23:00:00Z');
+      return { kind, source: 'Open-Meteo' as const, model: 'era5_land', latitude: 47, longitude: 8,
+        fetchedAt: clock.toISOString(), availableAt: clock.toISOString(), originalStepMinutes: 60 as const, points: [] };
+    } },
+    archive: {
+      async readModel() { return null; },
+      async readObservations(start, end, availableAt) {
+        reads.push({ start: start.toISOString(), end: end.toISOString(), availableAt: availableAt.toISOString() });
+        clock = new Date('2026-10-27T23:30:00Z');
+        return observations.filter(p => Date.parse(p.at) >= start.getTime() && Date.parse(p.at) < end.getTime());
+      },
+      async saveTraining(run) { models.push(run); }, async saveForecasts() {}, async readForecast() { return null; },
+    },
+  });
+  await service.train();
+  assert.equal(reads[0].end, cutoff); assert.equal(reads[0].availableAt, cutoff);
+  assert.equal(reads[0].start, '2026-08-04T22:00:00.000Z');
+  assert.equal(models[0].model.trainedAt, cutoff);
+  assert.equal(models[0].model.trainingDate, '2026-10-28');
+  assert.equal(models[0].model.training.to, '2026-10-28');
+  assert.equal(models[0].model.training.observations, 2);
+  assert.equal(models[0].model.weatherStatus, 'insufficient_history');
+  assert.deepEqual(models[0].model.weatherLocation, { latitude: 47, longitude: 8 });
+  assert.deepEqual(models[0].observations, observations.slice(0, 2));
 });
 
 test('manual full training reloads history and recalculates today plus the next two days immediately', async () => {
@@ -120,15 +186,18 @@ test('household API GETs only read; POST starts full training asynchronously and
 
 test('temperature requests are independent of panel geometry, hourly cached, validated and archived', async () => {
   let at = new Date('2026-10-27T11:00:00Z');
-  const requests: URL[] = [], stored: unknown[] = [];
+  const requests: URL[] = [], stored: unknown[] = [], archiveModels: string[] = [];
   let bad = false;
-  const reader = createHouseholdWeather({ config: { latitude: 47, longitude: 8, locationName: 'home', arrayPowerKw: 8, performanceRatio: .85 },
-    now: () => new Date(at), archive: { async readWeather() { return null; }, async saveWeather(w) { stored.push(w); } },
+  const reader = createHouseholdWeather({ config: { latitude: 47, longitude: 8, locationName: 'home', arrayPowerKw: 8, performanceRatio: .85, weatherModel: 'meteoswiss_icon_ch2' },
+    now: () => new Date(at), archive: { async readWeather(_kind, config) { archiveModels.push(config.weatherModel!); return null; }, async saveWeather(w) { stored.push(w); } },
     fetch: async url => { requests.push(new URL(String(url))); return Response.json({ hourly_units: { time: 'unixtime', temperature_2m: bad ? 'K' : '°C' },
       hourly: { time: [1793098800, 1793102400], temperature_2m: [10, 11] } }); },
   });
   const initial = await reader.read('forecast'); assert.ok(initial); assert.equal(initial.originalStepMinutes, 60);
   assert.equal(requests[0].searchParams.get('hourly'), 'temperature_2m');
+  assert.equal(requests[0].searchParams.get('end_date'), '2026-11-05');
+  assert.equal(requests[0].searchParams.get('models'), null);
+  assert.equal(archiveModels[0], 'best_match');
   await reader.read('forecast'); at = new Date('2026-10-27T11:15:00Z'); await reader.read('forecast');
   assert.equal(requests.length, 1);
   at = new Date('2026-10-27T12:00:00Z'); bad = true;

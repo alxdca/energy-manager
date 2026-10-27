@@ -136,15 +136,6 @@
         : consumption.source === 'configured_baseline' && consumption.excludesCar === true)
       && numeric(consumptionTotal) && consumptionTotal >= 0;
     write('forecast-consumption', hasConsumption ? `≈ ${integer.format(consumptionTotal)}` : '—');
-    if (learned) {
-      const days = consumption?.training?.completeSamplingDays ?? 0;
-      const weather = consumption?.method === 'weighted_profile_weather' ? ' · correction météo apprise' : ' · sans correction météo';
-      const fallback = consumption?.fallback;
-      const source = fallback?.appliedSlots > 0 ? `${fallback.appliedSlots < consumption.slots.length ? 'Profil complété · ' : ''}${fallback.source === 'recent_average'
-        ? `Moyenne récente sur ${fallback.windowHours} h (${decimal.format(fallback.observedHours)} h relevées)`
-        : `Base configurée · ${integer.format(fallback.baselinePowerW)} W`}` : `${days} jours complets${weather}`;
-      write('forecast-household-status', `${hasConsumption ? source : 'Historique insuffisant'} · voiture non isolée · observation`);
-    }
     write('forecast-date', available || hasConsumption ? dateFormat.format(new Date(`${data.date}T12:00:00Z`)) : '');
     write('forecast-location', typeof data.locationName === 'string' ? data.locationName : '');
     const details = [];

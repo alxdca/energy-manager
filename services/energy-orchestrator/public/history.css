@@ -104,3 +104,19 @@ body[data-page=donnees] .timezone{display:none}
   .history-pagination-actions button{min-height:44px}
   .history-error{align-items:flex-start;flex-wrap:wrap}
 }
+
+.week-values{width:100%;margin:10px 0}
+.week-values th{white-space:normal;min-width:100px}
+.week-values td:first-child,.week-values th:first-child{text-align:left}
+.week-values a{color:var(--teal);white-space:nowrap;text-decoration:underline;text-underline-offset:3px}
+.week-values td[data-stale=true]{color:var(--muted)}
+.week-short{display:none}
+@media(max-width:700px){
+  .week-full{display:none}
+  .week-short{display:inline}
+  .week-values{min-width:0;table-layout:fixed}
+  .week-values th,.week-values td,.week-values thead tr:first-child th{min-width:0;padding:8px 4px;font-size:10px}
+  .week-values th:first-child{width:24%}
+  .week-values th{overflow-wrap:normal}
+  .week-values a{white-space:normal}
+}

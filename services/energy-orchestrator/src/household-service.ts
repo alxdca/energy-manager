@@ -1,3 +1,4 @@
+import { forecastDayOffsets } from './forecast-horizon.js';
 import { randomUUID } from 'node:crypto';
 import { getCalendarDayBounds, getLocalDate } from './policy.js';
 import { householdModelVersion, predictHousehold, shiftDate, trainHouseholdModel,
@@ -41,18 +42,19 @@ export function createHouseholdService(options: {
       if (!loaded) { model = await options.archive.readModel(); loaded = true; }
       const at = now(), today = getLocalDate(at);
       const mustTrain = forceTraining || !model || model.version !== householdModelVersion || model.trainingDate !== today
+        || model.training.to !== today
         || Date.parse(model.validUntil) <= at.getTime();
       const mayRetry = forceTraining || lastAttempt === null || at.getTime() - lastAttempt >= 15 * 60_000;
       let historyUnavailable = false;
       if (mustTrain && mayRetry) {
         training = true; lastAttempt = at.getTime();
+        // Fetch weather first so its availability precedes the measurement snapshot.
+        const weather = await options.weather.read('historical', forceTraining);
         await options.finalizeMeasurements?.();
-        const start = getCalendarDayBounds(new Date(`${shiftDate(today, -84)}T00:00:00Z`)).start;
-        const [observations, weather] = await Promise.all([
-          options.archive.readObservations(start, at, at), options.weather.read('historical', forceTraining),
-        ]);
-        const trainedAt = now();
-        const candidate = trainHouseholdModel({ id: randomUUID(), at: trainedAt, observations, weather });
+        const trainingAt = now();
+        const start = getCalendarDayBounds(new Date(`${shiftDate(getLocalDate(trainingAt), -84)}T00:00:00Z`)).start;
+        const observations = await options.archive.readObservations(start, trainingAt, trainingAt);
+        const candidate = trainHouseholdModel({ id: randomUUID(), at: trainingAt, observations, weather });
         await options.archive.saveTraining({ model: candidate, observations, weather });
         model = candidate;
       }
@@ -63,7 +65,7 @@ export function createHouseholdService(options: {
       let observations: HouseholdObservation[] = [];
       try { observations = await options.archive.readObservations(start, issuedAt, issuedAt); }
       catch { historyUnavailable = true; }
-      const forecasts = [0, 1, 2].map(offset => applyHouseholdFallback(predictHousehold({ date: shiftDate(date, offset), at: issuedAt, model, weather, observations,
+      const forecasts = forecastDayOffsets.map(offset => applyHouseholdFallback(predictHousehold({ date: shiftDate(date, offset), at: issuedAt, model, weather, observations,
         ...(historyUnavailable ? { unavailableReason: 'current_measurements_unavailable' } : {}) }), observations, fallback));
       await options.archive.saveForecasts(forecasts, weather);
       error = null;
@@ -71,7 +73,7 @@ export function createHouseholdService(options: {
       error = 'L’apprentissage ou l’enregistrement des prévisions maison a échoué. Nouvelle tentative automatique.';
       // Expired models are never used to conceal a training failure.
       const issuedAt = now(), date = getLocalDate(issuedAt);
-      const forecasts = [0, 1, 2].map(offset => applyHouseholdFallback(predictHousehold({ date: shiftDate(date, offset), at: issuedAt,
+      const forecasts = forecastDayOffsets.map(offset => applyHouseholdFallback(predictHousehold({ date: shiftDate(date, offset), at: issuedAt,
         model, unavailableReason: 'training_failed' }), [], fallback));
       await options.archive.saveForecasts(forecasts).catch(() => {});
       throw new Error(error);
