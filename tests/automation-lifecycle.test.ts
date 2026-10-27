@@ -150,6 +150,33 @@ test('required car allocation yields an owned battery charge to hold and resumes
   assert.equal(f.inverter.getControlStatus().active, false);
 });
 
+test('invalid battery telemetry blocks the planner and recovers automatically when complete safety readings become healthy', async t => {
+  const f = await fixture('2026-10-27T15:30:00.000Z', 50);
+  t.after(() => f.cleanup());
+  assert.equal(f.runner.status().status, 'charging');
+  f.transport.memory.set(STORAGE + 2, 0);
+  await f.advanceTo('2026-10-27T15:30:10Z');
+  assert.equal(f.inverter.getControlStatus().active, false);
+  assert.match(f.inverter.getControlStatus().error!, /maxPowerWatts=0/);
+  assert.equal(f.runner.status().status, 'blocked');
+  assert.equal(f.runner.status().reason, 'controller_unavailable');
+  assert.equal(f.transport.memory.get(STORAGE + 5), 0);
+  const commands = f.commands.length;
+  await f.advanceTo('2026-10-27T15:30:20Z');
+  assert.equal(f.runner.status().status, 'blocked');
+  assert.equal(f.commands.length, commands, 'invalid readings never authorize a new command');
+
+  f.transport.memory.set(STORAGE + 2, 10000);
+  await f.advanceTo('2026-10-27T15:30:30Z');
+  assert.equal(f.inverter.getControlStatus().error, undefined);
+  assert.notEqual(f.runner.status().status, 'blocked');
+  assert.notEqual(f.runner.status().status, 'error');
+  await f.runner.evaluate();
+  assert.equal(f.runner.status().status, 'charging');
+  assert.equal(f.inverter.getControlStatus().automationMode, 'charge');
+  assert.equal(f.inverter.getControlStatus().automationOwner, 'lifecycle-test');
+});
+
 test('real controller charges until 16:55:00 and releases at that exact instant', async () => {
   const f = await fixture('2026-10-25T15:45:00.052Z');
   try {

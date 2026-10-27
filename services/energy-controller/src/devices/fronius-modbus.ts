@@ -213,7 +213,12 @@ export class FroniusModbus {
     const soc = this.unsigned(data[6], this.scale(data[20]));
     const rateScale = this.scale(data[23]);
     if (!(maxPower > 0) || soc < 0 || soc > 100 || reserve < 0 || reserve > 100 || 100 / rateScale > 32767 || rateScale > 100) {
-      throw new InverterControlError('Invalid battery power, SOC, reserve or rate scaling', 503);
+      // Invalid telemetry blocks every command, but an automatic interruption can
+      // recover after a complete fresh safety read confirms healthy normal mode.
+      throw new InverterControlError(
+        `Invalid battery power, SOC, reserve or rate scaling (maxPowerWatts=${maxPower}, socPercent=${soc}, reserveSocPercent=${reserve}, rateScale=${rateScale})`,
+        503, true,
+      );
     }
     if (![2,3,4,5,6].includes(data[9])) throw new InverterControlError('Battery is off, calibrating or has unknown status', 409);
     if (![0,1,2,3].includes(data[3]) || ![0,1].includes(data[15])) throw new InverterControlError('Unsupported battery control settings', 409);

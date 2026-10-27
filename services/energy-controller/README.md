@@ -23,6 +23,8 @@ Automatic lease expiry attempts to release control five seconds before the deadl
 
 An automatic activation blocked by another controller also recovers only after a fresh complete safety read confirms normal mode and a valid reserve. Recovery performs no writes and waits for a new planner decision; it never clears a foreign control window. Manual ownership conflicts and device faults remain latched for explicit recovery.
 
+Out-of-range battery power, SOC, reserve or rate scaling blocks activation and stops active control. Automatic interruptions can recover after a fresh complete safety read confirms valid values, healthy inverter state and normal mode. The error includes the rejected values for diagnosis. Manual interruptions and observed device faults still require explicit recovery.
+
 Battery-Emulator is not a runtime dependency. The checked v13.2.0 installation serves HTML telemetry at `/live`; the upstream project also publishes JSON telemetry over an optional MQTT connection (`SOC` scaled, `SOC_real` physical). Any future fallback must keep those percentages distinct. See the upstream [HTTP routes](https://github.com/dalathegreat/Battery-Emulator/blob/main/Software/src/devboard/webserver/webserver.cpp) and [MQTT telemetry](https://github.com/dalathegreat/Battery-Emulator/blob/main/Software/src/devboard/mqtt/mqtt.cpp).
 
 Build with `pnpm --filter energy-controller build`, then run `pnpm --filter energy-controller start`. Output lives in `services/energy-controller/dist/`. Service scripts also work from this directory, for example `pnpm test` and `pnpm restore-normal`.

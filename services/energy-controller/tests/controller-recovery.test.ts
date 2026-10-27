@@ -249,6 +249,92 @@ test('failed automatic activation during a temporary state can recover without r
   } finally { await f.modbus.disconnect(); }
 });
 
+const invalidBatteryReadings = [
+  { name: 'power', address: STORAGE + 2, invalid: 0, healthy: 10000, detail: 'maxPowerWatts=0' },
+  { name: 'SOC', address: STORAGE + 8, invalid: 10001, healthy: 5000, detail: 'socPercent=100.01' },
+  { name: 'reserve', address: STORAGE + 7, invalid: 10001, healthy: 2000, detail: 'reserveSocPercent=100.01' },
+  { name: 'small rate scale', address: STORAGE + 25, invalid: 65533, healthy: 65534, detail: 'rateScale=0.001' },
+  { name: 'large rate scale', address: STORAGE + 25, invalid: 3, healthy: 65534, detail: 'rateScale=1000' },
+];
+
+for (const reading of invalidBatteryReadings) {
+  test(`invalid battery ${reading.name} blocks automatic activation until a fresh healthy normal-mode read`, async () => {
+    const f = fixture();
+    try {
+      f.transport.memory.set(reading.address, reading.invalid);
+      await assert.rejects(f.charge(), /Invalid battery power, SOC, reserve or rate scaling/);
+      const error = f.inverter.getControlStatus().error;
+      assert.ok(error?.includes(reading.detail), 'diagnostics include the rejected value');
+      assert.equal(f.inverter.getControlStatus().active, false);
+      assert.equal(await f.inverter.getAutomationReserve(), null, 'invalid telemetry cannot clear the interruption');
+      assert.deepEqual(f.transport.writes, [], 'invalid preflight must never write registers');
+
+      f.transport.memory.set(reading.address, reading.healthy);
+      assert.equal(await f.inverter.getAutomationReserve(), null, 'cached state cannot clear the interruption');
+      await f.tick();
+      f.transport.memory.set(STORAGE + 5, 3);
+      assert.equal(await f.inverter.getAutomationReserve(), 20);
+      assert.equal(f.inverter.getControlStatus().error, error, 'foreign control must remain blocked');
+      f.transport.memory.set(STORAGE + 5, 0);
+      await f.tick();
+      f.transport.failRead = 40107;
+      assert.equal(await f.inverter.getAutomationReserve(), null);
+      assert.equal(f.inverter.getControlStatus().error, error, 'an incomplete safety read cannot clear the interruption');
+      f.transport.failRead = undefined;
+      await f.tick();
+      assert.equal(await f.inverter.getAutomationReserve(), 20);
+      assert.equal(f.inverter.getControlStatus().error, undefined);
+      assert.equal(f.inverter.getControlStatus().active, false, 'recovery waits for a new plan');
+      assert.deepEqual(f.transport.writes, [], 'recovery is read-only');
+      await f.charge();
+      assert.equal(f.inverter.getControlStatus().active, true, 'a newly authorized plan can charge again');
+    } finally { await f.inverter.cancelControl(); await f.modbus.disconnect(); }
+  });
+}
+
+for (const mode of ['charge', 'hold', 'manual'] as const) {
+  test(`invalid battery telemetry releases ${mode} control and only automatic control can recover after a healthy read`, async () => {
+    const f = fixture();
+    try {
+      if (mode === 'manual') await f.inverter.setBatteryChargePower(1000);
+      else if (mode === 'hold') await f.inverter.setAutomationHold(new Date(900_000).toISOString(), 'planner');
+      else await f.charge();
+      f.transport.memory.set(STORAGE + 2, 0);
+      await f.tick();
+      const error = f.inverter.getControlStatus().error;
+      assert.match(error!, /maxPowerWatts=0/);
+      assert.equal(f.inverter.getControlStatus().active, false);
+      assert.equal(f.transport.memory.get(STORAGE + 5), 0, 'invalid telemetry releases the owned command');
+      assert.equal(await f.inverter.getAutomationReserve(), null);
+      f.transport.memory.set(STORAGE + 2, 10000);
+      await f.tick();
+      const writes = [...f.transport.writes];
+      assert.equal(await f.inverter.getAutomationReserve(), 20);
+      assert.equal(f.inverter.getControlStatus().error, mode === 'manual' ? error : undefined);
+      assert.equal(f.inverter.getControlStatus().active, false);
+      assert.deepEqual(f.transport.writes, writes, 'recovery is read-only');
+    } finally { await f.inverter.cancelControl(); await f.modbus.disconnect(); }
+  });
+}
+
+test('an inverter fault observed while recovering invalid battery telemetry remains latched', async () => {
+  const f = fixture();
+  try {
+    f.transport.memory.set(STORAGE + 2, 0);
+    await assert.rejects(f.charge(), /Invalid battery power/);
+    f.transport.memory.set(STORAGE + 2, 10000);
+    f.setState(7);
+    assert.equal(await f.inverter.getAutomationReserve(), null);
+    const error = f.inverter.getControlStatus().error;
+    assert.match(error!, /state=7/);
+    f.setState(4);
+    await f.tick();
+    assert.equal(await f.inverter.getAutomationReserve(), 20);
+    assert.equal(f.inverter.getControlStatus().error, error, 'device faults still require explicit recovery');
+    assert.deepEqual(f.transport.writes, []);
+  } finally { await f.modbus.disconnect(); }
+});
+
 test('automatic ownership conflicts recover only after a fresh safe normal-mode read', async () => {
   for (const mode of [1, 2, 3]) {
     const f = fixture();
