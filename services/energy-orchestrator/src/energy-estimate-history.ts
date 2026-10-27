@@ -7,6 +7,7 @@ export interface EnergyEstimatePoint {
   start: string;
   end: string;
   estimatedConsumptionKwh: number | null;
+  source?: 'learned_profile' | 'recent_average' | 'configured_baseline';
 }
 
 /** Capture complete ongoing and future quarters; persistence freezes started intervals. */

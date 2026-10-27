@@ -96,7 +96,7 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
       if (!numeric(value)) { finish(); return; }
       segment.push(`${x(index)},${y(value)}`);
       const point = add('circle', { cx: x(index), cy: y(value), r: 3, class: `${className}-point` });
-      tooltip(point, `${row.label} · ${label} : ${chartNumber.format(value * 1000)} Wh`);
+      tooltip(point, `${row.label} · ${label} : ${chartNumber.format(value * 1000)} Wh${key === 'houseEstimated' && row.notes?.houseEstimated ? `\n${row.notes.houseEstimated}` : ''}`);
     });
     finish();
   };

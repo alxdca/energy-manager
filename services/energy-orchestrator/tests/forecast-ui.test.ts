@@ -5,12 +5,13 @@ import vm from 'node:vm';
 import { estimateConsumption } from '../src/consumption.js';
 import { emptySolarForecast } from '../src/forecast.js';
 import { predictHousehold, trainHouseholdModel, householdDaySlots } from '../src/household-model.js';
+import { applyHouseholdFallback } from '../src/household-fallback.js';
 
 const script = readFileSync(new URL('../public/forecast.js', import.meta.url), 'utf8');
 const decimal = (value: number) => value.toLocaleString('fr-CH', { maximumFractionDigits: 1 });
 const integer = (value: number) => value.toLocaleString('fr-CH', { maximumFractionDigits: 0 });
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const panelIds = ['solar-forecast', 'forecast-date', 'forecast-energy', 'forecast-location', 'forecast-updated', 'forecast-status', 'forecast-consumption'];
+const panelIds = ['solar-forecast', 'forecast-date', 'forecast-energy', 'forecast-location', 'forecast-updated', 'forecast-status', 'forecast-consumption', 'forecast-household-status'];
 
 class Element {
   textContent = '';
@@ -659,7 +660,7 @@ test('full-hour forecasts preserve valid 23/25-hour Zurich calendars in daily to
   }
 });
 
-test('learned household totals use their full-day slots independently of solar remaining periods and never fall back to baseline', async () => {
+test('learned household totals use their full-day slots independently of solar remaining periods and missing payloads remain unknown', async () => {
   const at = new Date('2026-10-24T12:00:00Z');
   const observations = householdDaySlots('2026-10-23').map(s => ({ at: new Date(Date.parse(s.end) - 30000).toISOString(), value: 500 }));
   const model = trainHouseholdModel({ id: 'ui', at, observations });
@@ -675,4 +676,19 @@ test('learned household totals use their full-day slots independently of solar r
   const invalid = structuredClone(householdForecast); invalid.slots.splice(1, 1);
   await b.complete({ ...source, householdForecast: invalid });
   assert.equal(b.get('forecast-consumption').textContent, '—');
+});
+
+test('household fallbacks display complete totals and clearly identify baseline or recent averages', async () => {
+  const at = new Date('2026-10-24T12:00:00Z'), b = browser();
+  const raw = predictHousehold({ date: '2026-10-24', at, model: null });
+  const source = committedForecast(futureSource(), at);
+  const baseline = applyHouseholdFallback(raw, [], { baselinePowerW: 1000, windowHours: 24 });
+  await b.complete({ ...source, householdForecast: baseline });
+  assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(24)}`);
+  assert.match(b.get('forecast-household-status').textContent, /Base configurée/);
+  b.fireTimer(10000);
+  const samples = Array.from({ length: 4 }, (_, i) => ({ at: new Date(at.getTime() - i * 900000 - 30000).toISOString(), value: 500 }));
+  await b.complete({ ...source, householdForecast: applyHouseholdFallback(raw, samples, { baselinePowerW: 1000, windowHours: 24 }) });
+  assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(48)}`);
+  assert.match(b.get('forecast-household-status').textContent, /Moyenne récente sur 24 h/);
 });

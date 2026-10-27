@@ -14,6 +14,7 @@ function fixture() {
   const observations: HouseholdObservation[] = householdDaySlots('2026-10-26').map(s => ({ at: new Date(Date.parse(s.end) - 30000).toISOString(), value: 250 }));
   let reads = 0, finalized = 0, weatherReads = 0;
   const service = createHouseholdService({ now: () => new Date(at),
+    fallback: { baselinePowerW: 800, windowHours: 24 },
     finalizeMeasurements: async () => { finalized++; },
     archive: {
       async readObservations(start, end) { reads++; if (failRead) throw new Error('database offline');
@@ -67,13 +68,34 @@ test('concurrent manual and scheduled training requests share a single training 
   assert.equal(f.models.length, 1); assert.equal(f.service.status().state, 'idle');
 });
 
-test('training failures report errors, retain only unexpired learned models and never use a configured baseline', async () => {
+test('training failures remain visible and use a labeled baseline instead of an expired learned model', async () => {
   const f = fixture(); await f.service.refresh();
   f.failRead(); f.setTime('2026-10-28T11:00:00Z');
   await assert.rejects(f.service.train(), /apprentissage/);
   assert.equal(f.service.status().state, 'error');
-  assert.equal(f.forecasts.get('2026-10-28')!.estimatedConsumptionKwh, null);
+  assert.ok(Math.abs(f.forecasts.get('2026-10-28')!.estimatedConsumptionKwh! - 19.2) < 1e-8);
+  assert.equal(f.forecasts.get('2026-10-28')!.source, 'configured_baseline');
+  assert.equal(f.forecasts.get('2026-10-28')!.modelId, null);
   assert.equal(f.forecasts.get('2026-10-28')!.fallbackReason, 'training_failed');
+});
+
+test('recent fallback readings cross midnight and refresh every quarter without retraining', async () => {
+  const f = fixture();
+  f.setTime('2026-10-26T23:15:00Z'); // 00:15 in Zurich: the window must include the previous local day.
+  f.observations.splice(0, f.observations.length, ...Array.from({ length: 4 }, (_, i) => ({
+    at: new Date(f.now().getTime() - i * 900000 - 30000).toISOString(), value: 500,
+  })));
+  await f.service.refresh();
+  const original = f.forecasts.get('2026-10-28')!;
+  assert.equal(original.fallback!.samples, 4);
+  // Some local slots already have learned references; the remaining ones use the average.
+  assert.ok(original.fallback!.appliedSlots > 0); assert.equal(original.fallback!.source, 'recent_average');
+  f.setTime('2026-10-26T23:30:00Z');
+  f.observations.push({ at: '2026-10-26T23:29:30Z', value: 1500 });
+  await f.service.refresh();
+  const refreshed = f.forecasts.get('2026-10-28')!;
+  assert.ok(Math.abs(refreshed.fallback!.averagePowerW! - 2800) < 1e-8);
+  assert.equal(f.models.length, 1, 'refreshing the fallback must not run daily training again');
 });
 
 test('household API GETs only read; POST starts full training asynchronously and rejects cross-origin requests', async () => {

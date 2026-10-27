@@ -58,6 +58,12 @@ function estimatedNote(estimate) {
   return estimate.value === null ? `Aucune estimation enregistrée (${coverage}).`
     : `Somme de ${coverage}.${estimate.count < estimate.expected ? ' Sous-total enregistré ; les périodes manquantes ne sont pas extrapolées.' : ''}`;
 }
+function householdSourceNote(day, start, end) {
+  const points = (day?.householdPredictions ?? []).filter(p => instant(p.start) >= start && instant(p.end) <= end && finiteEnergy(p.estimatedConsumptionKwh));
+  const average = points.filter(p => p.source === 'recent_average').length;
+  const baseline = points.filter(p => p.source === 'configured_baseline').length;
+  return [average ? `Secours : moyenne récente (${average} tranches).` : '', baseline ? `Secours : base configurée (${baseline} tranches).` : ''].filter(Boolean).join(' ');
+}
 function batteryObservations(day) {
   return (Array.isArray(day?.battery?.points) ? day.battery.points : [])
     .map(point => ({ at: instant(point?.at), value: point?.socPercent }))
@@ -127,7 +133,7 @@ function dayTable(day, selection, aggregation = 'quarter') {
     const notes = {
       houseMeasured: measuredNote(house),
       solarMeasured: measuredNote(pv),
-      houseEstimated: aggregation !== 'quarter' ? estimatedNote(houseEstimate) : values.houseEstimated === null ? 'Aucune estimation enregistrée pour cette tranche.' : 'Estimation enregistrée pour cette tranche de 15 min.',
+      houseEstimated: [aggregation !== 'quarter' ? estimatedNote(houseEstimate) : values.houseEstimated === null ? 'Aucune estimation enregistrée pour cette tranche.' : 'Estimation enregistrée pour cette tranche de 15 min.', householdSourceNote(day, from, to)].filter(Boolean).join(' '),
       solarEstimated: aggregation !== 'quarter' ? estimatedNote(solarEstimate) : values.solarEstimated === null ? 'Aucune estimation solaire enregistrée pour cette tranche.' : 'Prévision solaire enregistrée pour cette tranche de 15 min.',
       batteryMeasured: observed ? `${aggregation === 'quarter' ? 'Relevé de la tranche' : 'Dernier relevé dans la période'} à ${timeText(observed.at, true)}. Le niveau de charge n’est pas moyenné.${aggregation !== 'quarter' ? ' Les tranches sans relevé restent inconnues ; aucun report hors de cette période.' : ''}` : 'Aucun niveau de batterie mesuré dans cette tranche.',
       batteryEstimated: predicted !== null && predicted !== undefined ? aggregation === 'quarter' ? `Prévision pour la fin de la tranche à ${timeText(to)}.` : `Dernière prévision enregistrée pour une cible de cette période, à ${timeText(predictedAt)}. Le niveau de charge n’est pas moyenné ; les cibles manquantes ne sont pas interpolées.`

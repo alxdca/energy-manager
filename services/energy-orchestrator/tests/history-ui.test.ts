@@ -58,6 +58,19 @@ test('quarter measurements preserve zero and absent channels without extrapolati
   assert.equal(historyTable(day, ['houseMeasured', 'solarMeasured']).hasData, false);
 });
 
+test('fallback predictions are labeled in quarter and hourly notes without filling measurement gaps', () => {
+  const day = fixture();
+  const householdPredictions = day.energyEstimates.map((p, i) => ({ ...p, source: i === 0 ? 'recent_average' : 'configured_baseline' }));
+  const observed = { ...day, householdPredictions, observations: { ...day.observations, household: [] } };
+  const quarter = historyTable(observed);
+  assert.match(quarter.rows[0].notes.houseEstimated, /Secours : moyenne récente/);
+  assert.match(quarter.rows[1].notes.houseEstimated, /Secours : base configurée/);
+  assert.equal(quarter.rows[0].values.houseMeasured, null);
+  const hour = historyTable(observed, allHistorySelection, 'hour');
+  assert.match(hour.rows[0].notes.houseEstimated, /moyenne récente \(1 tranches\)/);
+  assert.match(hour.rows[0].notes.houseEstimated, /base configurée \(3 tranches\)/);
+});
+
 test('invalid readings stay unknown, duplicate observations count once and overlapping estimates remain unknown', () => {
   const day = fixture();
   day.observations.household.push(structuredClone(day.observations.household[0]));

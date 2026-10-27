@@ -96,12 +96,13 @@ export async function writeHouseholdIntervals(client: pg.PoolClient, intervals: 
 
 /** As-issued predictions for a historical chart: only versions issued before each slot started. */
 export async function readHouseholdPredictionHistory(pool: pg.Pool, date: string, now: Date): Promise<EnergyEstimatePoint[]> {
-  const result = await pool.query<{ at: string; value: number | null }>(`SELECT DISTINCT ON (slot->>'start')
-      slot->>'start' AS at, (slot->>'estimatedConsumptionKwh')::double precision * 1000 AS value
+  const result = await pool.query<{ at: string; value: number | null; source: EnergyEstimatePoint['source'] | null }>(`SELECT DISTINCT ON (slot->>'start')
+      slot->>'start' AS at, (slot->>'estimatedConsumptionKwh')::double precision * 1000 AS value, slot->>'source' AS source
     FROM energy_history.household_forecasts f, LATERAL jsonb_array_elements(f.forecast->'slots') slot
     WHERE f.target_date = $1 AND f.issued_at <= $2 AND f.issued_at <= (slot->>'start')::timestamptz
       AND f.model_version = $3
     ORDER BY slot->>'start', f.issued_at DESC`, [date, now, householdModelVersion]);
   return result.rows.map(point => ({ start: point.at, end: new Date(Date.parse(point.at) + 900_000).toISOString(),
-    estimatedConsumptionKwh: point.value === null ? null : point.value / 1000 }));
+    estimatedConsumptionKwh: point.value === null ? null : point.value / 1000,
+    ...(point.source ? { source: point.source } : {}) }));
 }

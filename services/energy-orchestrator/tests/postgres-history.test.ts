@@ -282,6 +282,26 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
     assert.equal((await history.householdArchive.readModel())!.id, latest!.modelId);
   });
 
+  await t.test('baseline and recent-average fallback provenance persists with immutable as-issued predictions', async t => {
+    const f = await database(t); let now = new Date(at); const history = await f.open(() => now);
+    const service = createHouseholdService({ archive: history.householdArchive, now: () => now,
+      fallback: { baselinePowerW: 1250, windowHours: 24 }, weather: { async read() { return undefined; } } });
+    await service.train();
+    const baseline = await history.householdArchive.readForecast('2026-01-16');
+    assert.equal(baseline!.source, 'configured_baseline'); near(baseline!.estimatedConsumptionKwh, 30);
+    assert.equal((await history.historyReader.day('2026-01-16', now)).householdPredictions![0].source, 'configured_baseline');
+    for (let i = 0; i < 4; i++) await f.admin.query('INSERT INTO energy_history.house_observations VALUES ($1,500)', [advance(-30 - i * 900)]);
+    now = new Date(advance(60)); await service.train();
+    const average = await history.householdArchive.readForecast('2026-01-16');
+    assert.equal(average!.source, 'recent_average'); near(average!.estimatedConsumptionKwh, 48);
+    const chart = await history.historyReader.day('2026-01-16', now);
+    assert.equal(chart.householdPredictions!.length, 96);
+    assert.ok(chart.householdPredictions!.every(p => p.source === 'recent_average' && p.estimatedConsumptionKwh === .5));
+    const original = (await f.admin.query('SELECT forecast FROM energy_history.household_forecasts WHERE target_date=$1 ORDER BY issued_at LIMIT 1', ['2026-01-16'])).rows[0].forecast;
+    assert.deepEqual(original, baseline);
+    assert.ok((await history.historyReader.day(date, now)).householdPredictions!.every(p => p.start >= at), 'fallback never backfills past forecasts');
+  });
+
   for (const version of [1, 2, 3, 4, 5, 8, '6', null]) await t.test(`unsupported schema ${JSON.stringify(version)} fails without changing stored data`, async t => {
     const f = await database(t); const history = await f.open(); await history.close();
     await f.admin.query('INSERT INTO energy_history.battery_observations VALUES ($1,50)', [advance(5)]);

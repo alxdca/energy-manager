@@ -3,6 +3,7 @@ import { getCalendarDayBounds, getLocalDate } from './policy.js';
 import { householdModelVersion, predictHousehold, shiftDate, trainHouseholdModel,
   type HouseholdForecast, type HouseholdModel, type HouseholdObservation, type HouseholdWeather } from './household-model.js';
 import type { createHouseholdWeather } from './household-weather.js';
+import { applyHouseholdFallback, loadHouseholdFallbackConfig, type HouseholdFallbackConfig } from './household-fallback.js';
 
 export interface HouseholdTrainingRun {
   model: HouseholdModel; observations: HouseholdObservation[]; weather?: HouseholdWeather;
@@ -24,8 +25,10 @@ export interface HouseholdTrainingStatus {
 export function createHouseholdService(options: {
   archive: HouseholdForecastArchive; weather: ReturnType<typeof createHouseholdWeather>; now?: () => Date;
   finalizeMeasurements?(): Promise<void>;
+  fallback?: HouseholdFallbackConfig;
 }) {
   const now = options.now ?? (() => new Date());
+  const fallback = options.fallback ?? loadHouseholdFallbackConfig();
   let model: HouseholdModel | null = null, loaded = false;
   let pending: Promise<void> | null = null, training = false, requestedTraining = false;
   let error: string | null = null;
@@ -55,20 +58,21 @@ export function createHouseholdService(options: {
       }
       const weather = await options.weather.read('forecast');
       const issuedAt = now(), date = getLocalDate(issuedAt);
-      const start = getCalendarDayBounds(new Date(`${date}T00:00:00Z`)).start;
+      const dayStart = getCalendarDayBounds(new Date(`${date}T00:00:00Z`)).start;
+      const start = new Date(Math.min(dayStart.getTime(), issuedAt.getTime() - fallback.windowHours * 3_600_000));
       let observations: HouseholdObservation[] = [];
       try { observations = await options.archive.readObservations(start, issuedAt, issuedAt); }
       catch { historyUnavailable = true; }
-      const forecasts = [0, 1, 2].map(offset => predictHousehold({ date: shiftDate(date, offset), at: issuedAt, model, weather, observations,
-        ...(historyUnavailable ? { unavailableReason: 'current_measurements_unavailable' } : {}) }));
+      const forecasts = [0, 1, 2].map(offset => applyHouseholdFallback(predictHousehold({ date: shiftDate(date, offset), at: issuedAt, model, weather, observations,
+        ...(historyUnavailable ? { unavailableReason: 'current_measurements_unavailable' } : {}) }), observations, fallback));
       await options.archive.saveForecasts(forecasts, weather);
       error = null;
     } catch {
       error = 'L’apprentissage ou l’enregistrement des prévisions maison a échoué. Nouvelle tentative automatique.';
       // Expired models are never used to conceal a training failure.
       const issuedAt = now(), date = getLocalDate(issuedAt);
-      const forecasts = [0, 1, 2].map(offset => predictHousehold({ date: shiftDate(date, offset), at: issuedAt,
-        model, unavailableReason: 'training_failed' }));
+      const forecasts = [0, 1, 2].map(offset => applyHouseholdFallback(predictHousehold({ date: shiftDate(date, offset), at: issuedAt,
+        model, unavailableReason: 'training_failed' }), [], fallback));
       await options.archive.saveForecasts(forecasts).catch(() => {});
       throw new Error(error);
     } finally { training = false; }

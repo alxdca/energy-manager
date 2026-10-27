@@ -42,15 +42,23 @@ export interface HouseholdForecastSlot {
   start: string; end: string; estimatedConsumptionKwh: number | null;
   observations: number; matchingWeekdays: number; weekdayFactor: 1 | 4; weekdayWeightShare: number | null;
   weatherAdjustmentKwh: number | null;
+  source?: 'learned_profile' | 'recent_average' | 'configured_baseline';
 }
 export interface HouseholdForecast {
   date: string; issuedAt: string; modelId: string | null; trainedAt: string | null; modelVersion: typeof householdModelVersion;
-  source: 'measured_history'; scope: 'household_total'; excludesCar: false; mode: 'observation'; stepMinutes: 15; unit: 'kWh';
-  status: 'unavailable' | 'learning' | 'available'; method: 'weighted_profile' | 'weighted_profile_weather';
+  source: 'measured_history' | 'recent_average' | 'configured_baseline' | 'mixed';
+  scope: 'household_total'; excludesCar: false; mode: 'observation'; stepMinutes: 15; unit: 'kWh';
+  status: 'unavailable' | 'learning' | 'available' | 'fallback';
+  method: 'weighted_profile' | 'weighted_profile_weather' | 'recent_average' | 'configured_baseline' | 'mixed';
   estimatedConsumptionKwh: number | null; fallbackReason: string | null; uncertainty: 'uncalibrated';
   slots: HouseholdForecastSlot[];
   hourly: Array<{ start: string; end: string; estimatedConsumptionKwh: number | null }>;
   training: HouseholdModel['training'] | null;
+  fallback?: {
+    windowHours: number; windowStart: string; windowEnd: string; minimumSamples: 4; samples: number; observedHours: number;
+    averagePowerW: number | null; baselinePowerW: number; appliedSlots: number; source: 'recent_average' | 'configured_baseline' | null;
+    alignment: 'observed_intervals' | 'nominal_quarter_approximation' | 'mixed' | null;
+  };
   weather: { status: string; calibration: WeatherCalibration | null; fetchedAt: string | null;
     model: string | null;
     originalStepMinutes: 60 | null; alignment: 'linear_interpolation' | null; alignmentToleranceSeconds: 60;
