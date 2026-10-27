@@ -76,6 +76,7 @@ test('dashboard pages keep their content separate except desktop home controls b
     { path: '/donnees', key: 'donnees', title: 'Données', content: 'history-day-heading' },
     { path: '/planification', key: 'planification', title: 'Planification', content: 'planner-current-heading' },
     { path: '/tarifs', key: 'tarifs', title: 'Tarifs', content: 'tariff-heading' },
+    { path: '/apprentissage', key: 'apprentissage', title: 'Apprentissage', content: 'learning-status-heading' },
     { path: '/appareils', key: 'appareils', title: 'Appareils', content: 'connections-heading' },
   ];
   for (const destination of destinations) {
@@ -105,7 +106,10 @@ test('dashboard pages keep their content separate except desktop home controls b
       assert.equal(html.includes('id="today-solar-forecast"'), destination.key === 'accueil');
       if (destination.key === 'accueil') assert.ok(html.indexOf('id="today-solar-forecast"') < html.indexOf('id="solar-forecast"'));
       assert.equal(html.includes('id="weather-state"'), destination.key === 'appareils');
-      assert.equal(html.includes('src="/dashboard.js"'), destination.key !== 'donnees');
+      assert.equal(html.includes('src="/dashboard.js"'), !['donnees', 'apprentissage'].includes(destination.key));
+      assert.equal(html.includes('src="/household.js"'), destination.key === 'apprentissage');
+      assert.equal(html.includes('id="household-train"'), destination.key === 'apprentissage');
+      assert.equal(html.includes('id="household-training-status"'), destination.key === 'apprentissage');
       assert.ok(html.indexOf('src="/theme.js"') < html.indexOf('href="/dashboard.css"'));
       assert.ok(html.includes('href="/" aria-label="Energy Manager — Accueil"'));
       for (const route of destinations) assert.ok(html.includes(`href="${route.path}"`));

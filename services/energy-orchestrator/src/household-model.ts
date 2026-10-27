@@ -3,6 +3,11 @@ import type { HouseholdInterval, ObservationPoint } from './observation-types.js
 export type { HouseholdInterval } from './observation-types.js';
 
 export const householdModelVersion = 'household-profile-v1';
+export const householdLearningSettings = {
+  historyDays: 84, halfLifeDays: 14, stepMinutes: 15,
+  minimumCompleteDays: 14, minimumMatchingWeekdays: 4, weekdayFactor: 4,
+  minimumWeatherDays: 42,
+} as const;
 const quarterMs = 900_000;
 const hourMs = 3_600_000;
 export const shiftDate = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
@@ -161,11 +166,12 @@ function profiles(days: Day[], reference: string, weather?: HouseholdWeather, ca
   const completeDays = days.filter(d => d.complete).length;
   for (let dow = 0; dow < 7; dow++) for (const [key, items] of grouped) {
     const matching = items.filter(x => weekday(x.date) === dow).length;
-    const bonus = completeDays >= 14 && matching >= 4 ? 4 : 1;
+    const bonus = completeDays >= householdLearningSettings.minimumCompleteDays
+      && matching >= householdLearningSettings.minimumMatchingWeekdays ? householdLearningSettings.weekdayFactor : 1;
     let numerator = 0, denominator = 0, sameDay = 0, removed = 0;
     for (const item of items) {
       const same = weekday(item.date) === dow;
-      const w = 2 ** (-daysApart(reference, item.date) / 14) * (same ? bonus : 1);
+      const w = 2 ** (-daysApart(reference, item.date) / householdLearningSettings.halfLifeDays) * (same ? bonus : 1);
       numerator += (item.kwh - item.heating) * w; removed += item.heating * w;
       denominator += w; if (same) sameDay += w;
     }
@@ -182,7 +188,7 @@ function fit(days: Day[], weather: HouseholdWeather, threshold: number): Weather
     const g = coldDegreeHours(weather, start, end, threshold), t = coldDegreeHours(weather, start, end, 100);
     return g === null || t === null ? null : { x: g / hours, temperature: 100 - t / hours,
       y: day.samples.reduce((n, s) => n + s.kwh, 0) / hours, dow: weekday(day.date),
-      w: 2 ** (-daysApart(days.at(-1)!.date, day.date) / 14) };
+      w: 2 ** (-daysApart(days.at(-1)!.date, day.date) / householdLearningSettings.halfLifeDays) };
   }).filter((x): x is NonNullable<typeof x> => x !== null);
   if (rows.length < 28) return null;
   const cold = rows.filter(r => r.temperature < threshold), warm = rows.filter(r => r.temperature >= threshold);
@@ -224,7 +230,7 @@ function learnWeather(days: Day[], weather?: HouseholdWeather): { calibration: W
   if (!weather) return { calibration: null, status: 'unavailable', days: 0 };
   const eligible = days.filter(d => weatherCovered(d) && d.samples.every(s => degrees(s, weather, 100) !== null));
   // 28 calibration days plus separate seven-day selection and final diagnostic holdouts.
-  if (eligible.length < 42) return { calibration: null, status: 'insufficient_history', days: eligible.length };
+  if (eligible.length < householdLearningSettings.minimumWeatherDays) return { calibration: null, status: 'insufficient_history', days: eligible.length };
   const training = eligible.slice(0, -14), selection = eligible.slice(-14, -7), holdout = eligible.slice(-7);
   const temperatures = training.map(d => {
     const a = Date.parse(d.samples[0].interval!.start), b = Date.parse(d.samples.at(-1)!.interval!.end);
@@ -248,7 +254,7 @@ function learnWeather(days: Day[], weather?: HouseholdWeather): { calibration: W
 }
 
 export function trainHouseholdModel(input: { id: string; at: Date; observations: HouseholdObservation[]; weather?: HouseholdWeather }): HouseholdModel {
-  const today = getLocalDate(input.at), from = shiftDate(today, -84);
+  const today = getLocalDate(input.at), from = shiftDate(today, -householdLearningSettings.historyDays);
   // Finalized readings from the current partial day contribute only to their observed slots.
   const days = prepare(input.observations, input.at).filter(d => d.date >= from && d.date <= today);
   const weather = input.weather?.kind === 'historical' && Date.parse(input.weather.availableAt) <= input.at.getTime()
@@ -258,7 +264,8 @@ export function trainHouseholdModel(input: { id: string; at: Date; observations:
     validUntil: getCalendarDayBounds(new Date(`${shiftDate(today, 1)}T00:00:00Z`)).start.toISOString(),
     scope: 'household_total', mode: 'observation', training: { from, to: today, usableDays: days.length,
       completeSamplingDays: days.filter(d => d.complete).length, observations: days.reduce((n, d) => n + d.samples.length, 0),
-      weatherDays: learned.days, halfLifeDays: 14, originalStepMinutes: 15, alignment: 'nominal_quarter_approximation' },
+      weatherDays: learned.days, halfLifeDays: householdLearningSettings.halfLifeDays,
+      originalStepMinutes: householdLearningSettings.stepMinutes, alignment: 'nominal_quarter_approximation' },
     profiles: profiles(days, today), weatherProfiles: learned.calibration ? profiles(days, today, weather, learned.calibration) : {},
     calibration: learned.calibration, weatherLocation: weather ? { latitude: weather.latitude, longitude: weather.longitude } : null,
     weatherStatus: learned.status,

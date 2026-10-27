@@ -1,7 +1,7 @@
 import { forecastDayOffsets } from './forecast-horizon.js';
 import { randomUUID } from 'node:crypto';
 import { getCalendarDayBounds, getLocalDate } from './policy.js';
-import { householdModelVersion, predictHousehold, shiftDate, trainHouseholdModel,
+import { householdLearningSettings, householdModelVersion, predictHousehold, shiftDate, trainHouseholdModel,
   type HouseholdForecast, type HouseholdModel, type HouseholdObservation, type HouseholdWeather } from './household-model.js';
 import type { createHouseholdWeather } from './household-weather.js';
 import { applyHouseholdFallback, loadHouseholdFallbackConfig, type HouseholdFallbackConfig } from './household-fallback.js';
@@ -20,6 +20,9 @@ export interface HouseholdTrainingStatus {
   state: 'idle' | 'training' | 'error'; error: string | null; lastTrainedAt: string | null;
   nextTrainingAt: string | null; modelId: string | null; training: HouseholdModel['training'] | null;
   weatherStatus: HouseholdModel['weatherStatus'] | null; mode: 'observation'; scope: 'household_total';
+  modelVersion: string | null;
+  calibration: HouseholdModel['calibration'];
+  settings: typeof householdLearningSettings & { automaticTraining: 'daily'; fallback: HouseholdFallbackConfig };
 }
 
 /** Daily training and explicit manual training share a serialized path; GETs only read saved results. */
@@ -36,7 +39,9 @@ export function createHouseholdService(options: {
   let lastAttempt: number | null = null;
   const status = (): HouseholdTrainingStatus => ({ state: training || requestedTraining ? 'training' : error ? 'error' : 'idle', error,
     lastTrainedAt: model?.trainedAt ?? null, nextTrainingAt: model?.validUntil ?? null, modelId: model?.id ?? null,
-    training: model?.training ?? null, weatherStatus: model?.weatherStatus ?? null, mode: 'observation', scope: 'household_total' });
+    training: model?.training ?? null, weatherStatus: model?.weatherStatus ?? null, mode: 'observation', scope: 'household_total',
+    modelVersion: model?.version ?? null, calibration: model?.calibration ? { ...model.calibration } : null,
+    settings: { ...householdLearningSettings, automaticTraining: 'daily', fallback: { ...fallback } } });
   async function calculate(forceTraining: boolean): Promise<void> {
     try {
       if (!loaded) { model = await options.archive.readModel(); loaded = true; }
@@ -52,7 +57,7 @@ export function createHouseholdService(options: {
         const weather = await options.weather.read('historical', forceTraining);
         await options.finalizeMeasurements?.();
         const trainingAt = now();
-        const start = getCalendarDayBounds(new Date(`${shiftDate(getLocalDate(trainingAt), -84)}T00:00:00Z`)).start;
+        const start = getCalendarDayBounds(new Date(`${shiftDate(getLocalDate(trainingAt), -householdLearningSettings.historyDays)}T00:00:00Z`)).start;
         const observations = await options.archive.readObservations(start, trainingAt, trainingAt);
         const candidate = trainHouseholdModel({ id: randomUUID(), at: trainingAt, observations, weather });
         await options.archive.saveTraining({ model: candidate, observations, weather });

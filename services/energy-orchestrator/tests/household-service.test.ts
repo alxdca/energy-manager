@@ -168,7 +168,15 @@ test('household API GETs only read; POST starts full training asynchronously and
   const f = fixture(); await f.service.refresh();
   const api = createApi({ controllerUrl: null, household: f.service, now: f.now, tesla: { tokensPath: null } });
   const counts = f.counts();
-  assert.equal((await api.request('/api/household/training')).status, 200);
+  const statusResponse = await api.request('/api/household/training');
+  assert.equal(statusResponse.status, 200);
+  const status = await statusResponse.json();
+  assert.equal(status.settings.automaticTraining, 'daily');
+  assert.equal(status.settings.historyDays, 84);
+  assert.deepEqual(status.settings.fallback, { baselinePowerW: 800, windowHours: 24 });
+  assert.equal(status.training.observations, 96);
+  assert.equal(status.modelVersion, f.models[0].model.version);
+  assert.equal(status.calibration, null);
   assert.equal((await api.request('/api/household/forecast?date=2026-10-28')).status, 200);
   assert.equal((await api.request('/api/household/forecast?date=2026-02-30')).status, 400);
   assert.deepEqual(f.counts(), counts);

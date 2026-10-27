@@ -791,7 +791,7 @@ test('planner page uses one dedicated snapshot poll for current battery readings
   assert.match(b.get('planner-last').textContent, /14:00/);
   assert.doesNotMatch(pages.planification, /src="\/(?:controls|forecast)\.js"|<form|<button(?![^>]*theme-toggle)/);
   assert.match(pages.planification, /href="\/planification" aria-current="page" aria-label="Planification"/);
-  assert.equal((pages.planification.match(/class="nav-link/g) || []).length, 6);
+  assert.equal((pages.planification.match(/class="nav-link/g) || []).length, 7);
   b.fireTimer(10000);
   await b.complete(snapshot({ planner: plannerDetails(), automation: automation() }));
   assert.equal(b.requests.length, 2);
@@ -1731,7 +1731,7 @@ test('home accepts retained energy values with real timestamps without claiming 
   assert.match(b.get('today-daily-energy').getAttribute('title')!, /11:59:30/);
 });
 
-test('daily readings remain available on home after removing the dedicated tracking page', async () => {
+test('daily readings appear above the home forecasts with matching value styles', async () => {
   const b = browser('accueil');
   b.get('today-forecast-energy').textContent = '≈ 18,3';
   b.get('today-forecast-consumption').textContent = '≈ 29';
@@ -1743,7 +1743,12 @@ test('daily readings remain available on home after removing the dedicated track
   assert.equal(b.get('today-forecast-energy').textContent, '≈ 18,3');
   assert.equal(b.get('today-forecast-consumption').textContent, '≈ 29');
   assert.equal(b.requests.length, 1);
-  assert.match(pages.accueil, /<details[^>]+id="today-daily-energy" hidden>/);
+  assert.match(pages.accueil, /<div class="daily-energy-actuals" id="today-daily-energy" hidden>/);
+  assert.doesNotMatch(pages.accueil, /Relevé du jour/);
+  assert.ok(pages.accueil.indexOf('id="today-daily-household"') < pages.accueil.indexOf('id="today-forecast-energy"'));
+  for (const id of ['today-daily-solar', 'today-daily-household', 'today-forecast-energy', 'today-forecast-consumption']) {
+    assert.ok(pages.accueil.includes(`<div class="forecast-production"><strong id="${id}">`));
+  }
   assert.match(pages.accueil, /Production relevée/);
   assert.match(pages.accueil, /Consommation relevée/);
   assert.match(pages.accueil, /Solaire · voiture non isolée/);

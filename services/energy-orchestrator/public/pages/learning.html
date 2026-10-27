@@ -1,0 +1,61 @@
+<p class="page-subtitle">L’apprentissage automatique utilise vos mesures pour prévoir la consommation de la maison, voiture comprise.</p>
+<p class="notice" id="household-training-error" role="alert" hidden></p>
+<div class="planner-grid learning-grid">
+  <section class="panel planner-panel" aria-labelledby="learning-status-heading">
+    <div class="panel-heading"><h2 id="learning-status-heading">Apprentissage automatique</h2><span class="badge neutral" id="learning-state">Chargement…</span></div>
+    <p class="planner-decision" id="household-training-status" role="status" aria-live="polite">Lecture du dernier apprentissage…</p>
+    <dl class="planner-metrics">
+      <div><dt>Dernier apprentissage</dt><dd id="learning-last">—</dd></div>
+      <div><dt>Prochain cycle quotidien</dt><dd id="learning-next">—</dd></div>
+      <div><dt>Version du modèle</dt><dd id="learning-version">—</dd></div>
+    </dl>
+    <button class="control-apply" type="button" id="household-train" disabled><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg>Relancer l’apprentissage complet</button>
+    <p class="learning-note">Recharge l’historique disponible, réapprend le modèle et recalcule les prévisions enregistrées. Le traitement continue si vous quittez cette page.</p>
+  </section>
+
+  <section class="panel planner-panel" aria-labelledby="learning-settings-heading">
+    <div class="panel-heading"><h2 id="learning-settings-heading">Réglages actifs</h2><svg class="icon muted" aria-hidden="true"><use href="#i-controls"/></svg></div>
+    <p class="learning-note">Configuration en lecture seule. Les valeurs de secours se règlent dans la configuration du service.</p>
+    <dl class="planner-metrics">
+      <div><dt>Fréquence d’apprentissage</dt><dd id="learning-frequency">—</dd></div>
+      <div><dt>Historique utilisé</dt><dd id="learning-history-days">—</dd></div>
+      <div><dt>Demi-vie des observations</dt><dd id="learning-half-life">—</dd></div>
+      <div><dt>Résolution des profils</dt><dd id="learning-step">—</dd></div>
+      <div><dt>Poids du même jour de semaine</dt><dd id="learning-weekday-factor">—</dd></div>
+      <div><dt>Fenêtre de moyenne de secours</dt><dd id="learning-fallback-window">—</dd></div>
+      <div><dt>Puissance de secours configurée</dt><dd id="learning-fallback-power">—</dd></div>
+    </dl>
+    <p class="learning-note" id="learning-weekday-rule"></p>
+    <p class="learning-note">Les prévisions sont actualisées toutes les 15 minutes. Le cycle quotidien s’exécute au premier bilan après minuit, heure de Zurich. Les mesures finalisées du jour contribuent aux créneaux déjà observés.</p>
+  </section>
+
+  <section class="panel planner-panel" aria-labelledby="learning-data-heading">
+    <div class="panel-heading"><h2 id="learning-data-heading">Données du dernier apprentissage</h2><svg class="icon muted" aria-hidden="true"><use href="#i-history"/></svg></div>
+    <dl class="planner-metrics">
+      <div><dt>Période analysée</dt><dd id="learning-period">—</dd></div>
+      <div><dt>Jours avec des mesures utilisables</dt><dd id="learning-usable-days">—</dd></div>
+      <div><dt>Jours entièrement couverts</dt><dd id="learning-complete-days">—</dd></div>
+      <div><dt>Observations retenues</dt><dd id="learning-observations">—</dd></div>
+      <div><dt>Jours utilisables pour la météo</dt><dd id="learning-weather-days">—</dd></div>
+      <div><dt>Correction météo</dt><dd id="learning-weather-state">—</dd></div>
+      <div><dt>Seuil de chauffage appris</dt><dd id="learning-weather-threshold">—</dd></div>
+      <div><dt>Sensibilité au froid apprise</dt><dd id="learning-weather-slope">—</dd></div>
+    </dl>
+    <p class="learning-note" id="learning-weather-rule"></p>
+  </section>
+
+  <section class="panel planner-panel" aria-labelledby="learning-forecast-heading">
+    <div class="panel-heading"><h2 id="learning-forecast-heading">Prévision maison du jour</h2><a class="learning-link" href="/donnees">Voir les données →</a></div>
+    <p class="learning-note" id="learning-forecast-status" role="status">Lecture de la prévision enregistrée…</p>
+    <dl class="planner-metrics">
+      <div><dt>Dernier calcul</dt><dd id="learning-forecast-at">—</dd></div>
+      <div><dt>Consommation prévue</dt><dd id="learning-forecast-kwh">—</dd></div>
+      <div><dt>Créneaux issus du modèle</dt><dd id="learning-forecast-learned">—</dd></div>
+      <div><dt>Créneaux de secours</dt><dd id="learning-forecast-fallback">—</dd></div>
+      <div><dt>Source de secours utilisée</dt><dd id="learning-forecast-source">—</dd></div>
+      <div><dt>Puissance moyenne récente</dt><dd id="learning-forecast-average">—</dd></div>
+      <div><dt>Mesures dans la moyenne récente</dt><dd id="learning-forecast-samples">—</dd></div>
+    </dl>
+    <p class="learning-note">Les créneaux manquants utilisent la moyenne récente, puis la puissance de secours configurée. Ces valeurs de secours ne servent jamais à entraîner le modèle. La couverture ne mesure pas la précision des prévisions.</p>
+  </section>
+</div>

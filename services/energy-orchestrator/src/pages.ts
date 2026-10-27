@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-export type PageKey = 'accueil' | 'pilotage' | 'donnees' | 'planification' | 'tarifs' | 'appareils';
+export type PageKey = 'accueil' | 'pilotage' | 'donnees' | 'planification' | 'apprentissage' | 'tarifs' | 'appareils';
 
 const forecastFragment = new URL('../public/pages/forecast.html', import.meta.url);
 
@@ -37,6 +37,11 @@ const pages: Record<PageKey, {
     description: 'Consultez vos tarifs, vos créneaux et les objectifs de votre installation.',
     icon: 'clock', fragment: new URL('../public/pages/tariffs.html', import.meta.url),
   },
+  apprentissage: {
+    path: '/apprentissage', title: 'Apprentissage', navLabel: 'Apprent.',
+    description: 'Réglages et statistiques de l’apprentissage automatique de la consommation maison.',
+    icon: 'leaf', fragment: new URL('../public/pages/learning.html', import.meta.url),
+  },
   appareils: {
     path: '/appareils', title: 'Appareils',
     description: 'Retrouvez les connexions et la disponibilité de vos mesures.',
@@ -69,15 +74,15 @@ export async function renderPage(page: PageKey): Promise<string> {
     PAGE_INITIAL_DATE: page === 'donnees' ? '—' : 'Europe/Zurich',
     PAGE_TIMEZONE_LABEL: page === 'donnees' ? '' : 'Zurich',
     PAGE_STYLES: page === 'donnees' ? '<link rel="stylesheet" href="/history.css">' : '',
-    PAGE_ACTIONS: page === 'donnees' ? '<button class="theme-toggle" type="button" id="household-train" aria-label="Relancer l’apprentissage complet" title="Relancer l’apprentissage complet"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg><span>Relancer l’apprentissage complet</span></button>' : '',
+    PAGE_ACTIONS: '',
     PAGE_CONTENT: homeControls ? `<div class="home-overview">${content}\n<div class="desktop-home-forecast">${homeForecast.replaceAll('{{ENERGY_UNIT}}', 'kWh')}</div></div>\n<div class="desktop-home-controls">${homeControls}</div>` : displayContent,
     PAGE_SCRIPTS: [
-      page !== 'donnees' ? '<script src="/dashboard.js" defer></script>' : '',
+      page !== 'donnees' && page !== 'apprentissage' ? '<script src="/dashboard.js" defer></script>' : '',
       page === 'accueil' || page === 'pilotage' ? '<script src="/controls.js" defer></script>' : '',
       page === 'accueil' || page === 'appareils' ? '<script src="/forecast.js" defer></script>' : '',
       page === 'appareils' ? '<script src="/tesla.js" defer></script>' : '',
       page === 'donnees' ? '<script src="/history.js" type="module"></script>' : '',
-      page === 'donnees' ? '<script src="/household.js" defer></script>' : '',
+      page === 'apprentissage' ? '<script src="/household.js" defer></script>' : '',
     ].filter(Boolean).join('\n  '),
     PAGE_NAV: Object.entries(pages).map(([key, item]) => {
       const active = key === page;

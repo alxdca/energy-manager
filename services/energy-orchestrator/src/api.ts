@@ -192,7 +192,7 @@ export function createApi(options: ApiOptions = {}) {
   const pageRoutes: [string, PageKey][] = [
     ['/', 'accueil'], ['/dashboard', 'accueil'], ['/pilotage', 'pilotage'],
     ['/tarifs', 'tarifs'], ['/appareils', 'appareils'], ['/planification', 'planification'],
-    ['/donnees', 'donnees'],
+    ['/donnees', 'donnees'], ['/apprentissage', 'apprentissage'],
   ];
   for (const [path, page] of pageRoutes) {
     app.get(path, async c => c.html(await renderPage(page)));
