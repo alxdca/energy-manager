@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { estimateConsumption } from '../src/consumption.js';
 import { emptySolarForecast } from '../src/forecast.js';
+import { predictHousehold, trainHouseholdModel, householdDaySlots } from '../src/household-model.js';
 
 const script = readFileSync(new URL('../public/forecast.js', import.meta.url), 'utf8');
 const decimal = (value: number) => value.toLocaleString('fr-CH', { maximumFractionDigits: 1 });
@@ -656,4 +657,22 @@ test('full-hour forecasts preserve valid 23/25-hour Zurich calendars in daily to
     assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(remaining * 6)}`);
     assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(remaining)}`);
   }
+});
+
+test('learned household totals use their full-day slots independently of solar remaining periods and never fall back to baseline', async () => {
+  const at = new Date('2026-10-24T12:00:00Z');
+  const observations = householdDaySlots('2026-10-23').map(s => ({ at: new Date(Date.parse(s.end) - 30000).toISOString(), value: 500 }));
+  const model = trainHouseholdModel({ id: 'ui', at, observations });
+  const householdForecast = predictHousehold({ date: '2026-10-24', at, model });
+  const b = browser();
+  const source = committedForecast(futureSource(), at);
+  await b.complete({ ...source, householdForecast });
+  assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(48)}`);
+  b.fireTimer(10000);
+  await b.complete({ ...source, householdForecast: null });
+  assert.equal(b.get('forecast-consumption').textContent, '—');
+  b.fireTimer(10000);
+  const invalid = structuredClone(householdForecast); invalid.slots.splice(1, 1);
+  await b.complete({ ...source, householdForecast: invalid });
+  assert.equal(b.get('forecast-consumption').textContent, '—');
 });

@@ -9,7 +9,8 @@ import type { CarChargingForecast } from './car-types.js';
 import { getCalendarDayBounds, getLocalDate, timeZone } from './policy.js';
 import type { Telemetry } from './status.js';
 import type { AsyncDailyEnergyReader, HistoryReader } from './history-reader.js';
-import { postgresSchema } from './postgres-schema.js';
+import { postgresSchema, householdForecastMigration } from './postgres-schema.js';
+import { createHouseholdArchive, readHouseholdPredictionHistory, writeHouseholdIntervals } from './household-postgres.js';
 import { createBatteryOrigin } from './battery-origin.js';
 import { hasUsableForecast, type SolarForecast } from './forecast.js';
 import { energyEstimatePoints, solarEstimatePoints, type EnergyEstimatePoint, type SolarEstimatePoint } from './energy-estimate-history.js';
@@ -126,8 +127,9 @@ export async function createPostgresHistory(options: { connectionString: string;
         CREATE TABLE IF NOT EXISTS energy_history.metadata (key text PRIMARY KEY, value jsonb NOT NULL)`);
       const version = await client.query('SELECT value FROM energy_history.metadata WHERE key = $1', ['schema_version']);
       const currentVersion = version.rows[0]?.value;
-      if (currentVersion !== undefined && currentVersion !== 6) throw new Error('Version de schéma PostgreSQL non prise en charge.');
+      if (currentVersion !== undefined && currentVersion !== 6 && currentVersion !== 7) throw new Error('Version de schéma PostgreSQL non prise en charge.');
       await client.query(postgresSchema);
+      if (currentVersion !== 7) await client.query(householdForecastMigration);
       await client.query(`INSERT INTO energy_history.metadata (key, value) VALUES ($1, $2::jsonb)
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, ['writer_identity', JSON.stringify(writerIdentity)]);
     });
@@ -191,6 +193,7 @@ export async function createPostgresHistory(options: { connectionString: string;
           await writePoints(client, 'battery', snapshot.battery);
           await writePoints(client, 'solar', snapshot.solar);
           await writePoints(client, 'house', snapshot.household);
+          await writeHouseholdIntervals(client, snapshot.householdIntervals);
           if (checkpoint !== savedObservationState) await writeMetadata(client, observationCheckpointKey, checkpoint);
           if (origin !== savedOriginState) await writeMetadata(client, originCheckpointKey, origin);
         });
@@ -363,14 +366,15 @@ export async function createPostgresHistory(options: { connectionString: string;
   const historyReader: HistoryReader = {
     async day(date, now = clock()) {
       const { start, end } = dayBounds(date);
-      const [energy, observed, saved] = await Promise.all([
-        energyDay(date, now), batteryHistory.summary(date, now), savedEstimates(date),
+      const [energy, observed, saved, householdPredictions] = await Promise.all([
+        energyDay(date, now), batteryHistory.summary(date, now), savedEstimates(date), readHouseholdPredictionHistory(pool, date, now),
       ]);
       return { date, timeZone, periodStart: start.toISOString(), periodEnd: end.toISOString(),
         dailyEnergy: energy.dailyEnergy, measurements: energy.measurements, battery: observed,
         historicalEstimated: { status: 'ready', error: null, points: saved.battery },
         observations: { method: 'counter_differences' as const, solar: energy.solar, household: energy.household },
-        solarEstimates: saved.solar, energyEstimates: saved.house };
+        solarEstimates: saved.solar, energyEstimates: saved.house,
+        householdPredictions };
     },
   };
   function close() {
@@ -381,6 +385,7 @@ export async function createPostgresHistory(options: { connectionString: string;
     })();
     return closing;
   }
-  return { dailyEnergyStore, batteryHistory, batteryOrigin, historyReader,
+  const householdArchive = createHouseholdArchive({ pool, transaction });
+  return { dailyEnergyStore, batteryHistory, batteryOrigin, historyReader, householdArchive,
     record, recordTelemetry, publishForecasts, readForecast, flush, close };
 }

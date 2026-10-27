@@ -23,6 +23,8 @@ import { getCalendarDayBounds } from './policy.js';
 import type { CarChargingForecast } from './car-types.js';
 import { createCarBatteryCoordinator } from './car-coordination.js';
 import { carSolarBatteryBudget } from './car-battery-budget.js';
+import { createHouseholdWeather } from './household-weather.js';
+import { createHouseholdService } from './household-service.js';
 
 const host = process.env.API_HOST || '127.0.0.1';
 const port = Number(process.env.API_PORT ?? 3002);
@@ -66,6 +68,9 @@ const carStatePath = process.env.CAR_AUTOMATION_STATE_PATH?.trim()
 const carState = await createCarAutomationState(carStatePath);
 const carConfig = loadCarAutomationConfig();
 const forecastConfig = loadForecastConfig();
+const household = createHouseholdService({ archive: history.householdArchive,
+  weather: createHouseholdWeather({ config: forecastConfig, archive: history.householdArchive }),
+  finalizeMeasurements: history.flush });
 const solarReaders = ([0, 1, 2] as const).map(dayOffset => createForecastReader({ config: forecastConfig, dayOffset, cacheAlignment: 'clock_hour' }));
 const consumption = loadConsumptionConfig();
 let automation: Automation;
@@ -134,6 +139,7 @@ carAutomation = createCarAutomation({
   releaseCoordination: carCoordinator.release,
 });
 const estimates = createEstimateService({
+  refreshHousehold: () => household.refresh(),
   forecastConfig, consumption, automationConfig,
   readSolar: offset => solarReaders[offset](),
   readTelemetry: telemetry,
@@ -172,6 +178,7 @@ const estimateSchedule = createEstimateSchedule({
   onError: () => console.error('Le bilan des estimations a échoué. Nouvelle tentative au prochain quart d’heure.'),
 });
 const app = createApi({ telemetryReader: telemetry, dailyEnergyStore, controlsService: controls,
+  household,
   estimates, automationConfig, automationStatus: () => automation.status(),
   forecastStore: history, batteryHistory,
   historyReader: history.historyReader, teslaService: tesla });
@@ -196,6 +203,7 @@ const stop = async () => {
   // Stop the car first so its allocation is released while battery supervision is still available.
   await carAutomation.stop();
   const results = await Promise.allSettled([estimateSchedule.stop(), automation.stop(), collector.stop(), provenanceCollector.stop(), tesla.stop()]);
+  await household.stop();
   await history.close();
   if (results.some(result => result.status === 'rejected')) throw new Error('Arrêt incomplet des collecteurs.');
 };

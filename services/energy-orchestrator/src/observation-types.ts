@@ -1,5 +1,9 @@
 /** Real sampled times and fixed per-channel units; no nominal buckets are observation data. */
 export interface ObservationPoint { at: string; value: number }
+/** Observed delta boundaries and provenance, written at finalization rather than inferred later. */
+export interface HouseholdInterval {
+  at: string; start: string; end: string; nominalStart: string; nominalEnd: string; source: string; availableAt: string;
+}
 export interface EnergyCounterPoint extends ObservationPoint {
   source: string;
   /** Native monotonic totals detect resets hidden by a derived household balance. */
@@ -27,5 +31,6 @@ export interface FinalizedObservations {
   battery: ObservationPoint[];
   solar: ObservationPoint[];
   household: ObservationPoint[];
+  householdIntervals: HouseholdInterval[];
   state: FinalizedObservationState;
 }

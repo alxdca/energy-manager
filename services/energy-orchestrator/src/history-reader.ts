@@ -25,6 +25,7 @@ export interface HistoryDay {
   historicalEstimated: BatteryEstimateSummary;
   solarEstimates: Array<{ start: string; end: string; estimatedProductionKwh: number }>;
   energyEstimates: EnergyEstimatePoint[];
+  householdPredictions?: EnergyEstimatePoint[];
 }
 
 export interface HistoryReader {

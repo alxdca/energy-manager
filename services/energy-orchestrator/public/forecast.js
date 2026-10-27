@@ -115,13 +115,14 @@
     const write = (id, value) => text(`${prefix}${id}`, value);
     const data = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     const productionForecast = publishedSeries(data, data.hourly, data.quarterHourly, 'estimatedProductionKwh', data.estimatedProductionKwh, .051);
-    const consumption = data.consumption;
-    const consumptionForecast = consumption ? publishedSeries(data, consumption.hourly, consumption.quarterHourly,
+    const learned = Object.hasOwn(data, 'householdForecast');
+    const consumption = learned ? data.householdForecast : data.consumption;
+    const consumptionForecast = consumption ? publishedSeries(learned ? { date: data.date } : data, consumption.hourly, learned ? consumption.slots : consumption.quarterHourly,
       'estimatedConsumptionKwh', consumption.estimatedConsumptionKwh, .001) : null;
     const productionTotal = productionForecast?.total
       ?? (data.hourly == null && data.quarterHourly == null ? data.estimatedProductionKwh : null);
     const consumptionTotal = consumptionForecast?.total
-      ?? (consumption?.hourly == null && consumption?.quarterHourly == null ? consumption?.estimatedConsumptionKwh : null);
+      ?? (!learned && consumption?.hourly == null && consumption?.quarterHourly == null ? consumption?.estimatedConsumptionKwh : null);
     let state = Object.hasOwn(states, data.status) ? data.status : 'offline';
     if ((state === 'online' || state === 'stale')
       && (!validDate(data.date) || !numeric(productionTotal) || productionTotal < 0)) state = 'offline';
@@ -131,9 +132,15 @@
     if (panel) panel.dataset.state = state;
     write('forecast-energy', available ? `≈ ${decimal.format(productionTotal)}` : '—');
     const hasConsumption = validDate(data.date) && consumption && typeof consumption === 'object'
-      && consumption.date === data.date && consumption.source === 'configured_baseline' && consumption.excludesCar === true
+      && consumption.date === data.date && (learned ? consumption.source === 'measured_history' && consumption.scope === 'household_total'
+        : consumption.source === 'configured_baseline' && consumption.excludesCar === true)
       && numeric(consumptionTotal) && consumptionTotal >= 0;
     write('forecast-consumption', hasConsumption ? `≈ ${integer.format(consumptionTotal)}` : '—');
+    if (learned) {
+      const days = consumption?.training?.completeSamplingDays ?? 0;
+      const weather = consumption?.method === 'weighted_profile_weather' ? ' · correction météo apprise' : ' · sans correction météo';
+      write('forecast-household-status', `${hasConsumption ? `${days} jours complets${weather}` : 'Historique insuffisant'} · voiture non isolée · observation`);
+    }
     write('forecast-date', available || hasConsumption ? dateFormat.format(new Date(`${data.date}T12:00:00Z`)) : '');
     write('forecast-location', typeof data.locationName === 'string' ? data.locationName : '');
     const details = [];

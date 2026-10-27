@@ -8,11 +8,13 @@
     <div class="daily-energy-readings"><div><strong id="today-daily-solar">—</strong><span> kWh</span><small>Production relevée</small></div><div><strong id="today-daily-household">—</strong><span> kWh</span><small>Consommation relevée</small></div></div>
     <p class="daily-energy-source">Solaire · voiture non isolée</p>
   </details>
+  <p class="daily-energy-status" id="today-forecast-household-status"></p>
   <div class="forecast-footer"><span id="today-forecast-updated"></span></div>
 </section>
 <section class="panel forecast-panel" id="solar-forecast" aria-labelledby="forecast-heading" data-state="loading">
   <div class="forecast-heading"><span class="flow-icon solar-icon"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg></span><div><h2 id="forecast-heading">Demain <span id="forecast-date"></span></h2><span class="forecast-location" id="forecast-location"></span></div><span class="forecast-status" id="forecast-status">Chargement…</span></div>
   <div class="forecast-summary"><div class="forecast-production"><strong id="forecast-energy">—</strong><span>{{ENERGY_UNIT}}</span><small>Production estimée</small></div><div class="forecast-production"><strong id="forecast-consumption">—</strong><span>{{ENERGY_UNIT}}</span><small>Consommation estimée</small></div></div>
+  <p class="daily-energy-status" id="forecast-household-status"></p>
   <div class="forecast-footer"><span id="forecast-updated"></span></div>
 </section>
 </div>

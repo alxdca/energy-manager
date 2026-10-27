@@ -17,8 +17,10 @@ import { buildBatteryChart } from './battery-chart.js';
 import type { EstimateReader } from './estimate-service.js';
 import { createTeslaService, type TeslaService, type TeslaOptions } from './tesla.js';
 import { createTeslaApi } from './tesla-api.js';
+import type { HouseholdService } from './household-service.js';
 
 export interface ApiOptions extends StatusOptions {
+  household?: Pick<HouseholdService, 'forecast' | 'train' | 'status'>;
   estimates?: EstimateReader;
   forecast?: ForecastOptions;
   forecastStore?: Pick<ForecastStore, 'readForecast'>;
@@ -55,6 +57,29 @@ export function createApi(options: ApiOptions = {}) {
   };
   app.route('/api/controls', controls.api);
   app.route('/api/tesla', createTeslaApi(tesla));
+  app.get('/api/household/training', c => {
+    c.header('Cache-Control', 'no-store');
+    return options.household ? c.json(options.household.status())
+      : c.json({ error: 'L’apprentissage maison n’est pas configuré.' }, 503);
+  });
+  app.post('/api/household/training', c => {
+    const origin = c.req.header('Origin');
+    if (c.req.header('Sec-Fetch-Site') === 'cross-site' || origin !== undefined && origin !== new URL(c.req.url).origin) {
+      return c.json({ error: 'Origine non autorisée.' }, 403);
+    }
+    if (!options.household) return c.json({ error: 'L’apprentissage maison n’est pas configuré.' }, 503);
+    void options.household.train().catch(() => {});
+    c.header('Cache-Control', 'no-store');
+    return c.json({ ...options.household.status(), accepted: true }, 202);
+  });
+  app.get('/api/household/forecast', async c => {
+    c.header('Cache-Control', 'no-store');
+    const date = c.req.query('date') ?? getLocalDate(now());
+    if (!validDate(date)) return c.json({ error: 'Date de prévision invalide.' }, 400);
+    if (!options.household) return c.json({ error: 'Les prévisions maison ne sont pas configurées.' }, 503);
+    try { return c.json({ forecast: await options.household.forecast(date) }); }
+    catch { return c.json({ error: 'Les prévisions maison enregistrées sont indisponibles.' }, 503); }
+  });
 
   app.get('/health', c => c.json({
     service: 'energy-orchestrator',
@@ -147,6 +172,7 @@ export function createApi(options: ApiOptions = {}) {
         const history = options.batteryHistory;
         const observed = history ? await Promise.resolve().then(() => history.summary(date, current)).catch(() => null) : null;
         return c.json({ ...solar,
+          ...(options.household ? { householdForecast: await options.household.forecast(date), householdTraining: options.household.status() } : {}),
           estimates: { calculatedAt: publication?.calculatedAt ?? null,
             nextEvaluationAt: options.estimates?.status().nextEvaluationAt
               ?? new Date((Math.floor(current.getTime() / 900_000) + 1) * 900_000).toISOString() },
@@ -182,6 +208,7 @@ export function createApi(options: ApiOptions = {}) {
   app.get('/history.js', async c => c.body(await readFile(new URL('../public/history.js', import.meta.url), 'utf8'), 200, { 'Content-Type': 'text/javascript; charset=utf-8' }));
   app.get('/history-data.js', async c => c.body(await readFile(new URL('../public/history-data.js', import.meta.url), 'utf8'), 200, { 'Content-Type': 'text/javascript; charset=utf-8' }));
   app.get('/history.css', async c => c.body(await readFile(new URL('../public/history.css', import.meta.url), 'utf8'), 200, { 'Content-Type': 'text/css; charset=utf-8' }));
+  app.get('/household.js', async c => c.body(await readFile(new URL('../public/household.js', import.meta.url), 'utf8'), 200, { 'Content-Type': 'text/javascript; charset=utf-8' }));
   return app;
 }
 

@@ -76,6 +76,7 @@ export async function renderPage(page: PageKey): Promise<string> {
       page === 'accueil' || page === 'appareils' ? '<script src="/forecast.js" defer></script>' : '',
       page === 'appareils' ? '<script src="/tesla.js" defer></script>' : '',
       page === 'donnees' ? '<script src="/history.js" type="module"></script>' : '',
+      page === 'donnees' ? '<script src="/household.js" defer></script>' : '',
     ].filter(Boolean).join('\n  '),
     PAGE_NAV: Object.entries(pages).map(([key, item]) => {
       const active = key === page;

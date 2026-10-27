@@ -305,6 +305,7 @@ function initializeHistory() {
   elements.next.addEventListener('click', () => { const date = shiftHistoryDate(elements.date.value, 1); if (date) void loadDate(date); });
   elements.today.addEventListener('click', () => { void loadDate(todayInZurich()); });
   elements.retry.addEventListener('click', () => { cache.clear(); void loadDate(elements.date.value); });
+  window.addEventListener('household-forecast-updated', () => { cache.clear(); void loadDate(elements.date.value, false); });
   window.addEventListener('popstate', () => {
     const url = new URL(location.href);
     state.view = viewFromUrl(url);

@@ -40,6 +40,8 @@ interface EstimateOptions {
   readSolarHistory?(date: string): Promise<SolarEstimatePoint[]>;
   /** Restore started consumption quarters after restart for consistent planning inputs. */
   readEnergyHistory?(date: string): Promise<EnergyEstimatePoint[]>;
+  /** The household model trains daily; regular updates reuse its saved profiles. */
+  refreshHousehold?(): Promise<void>;
   /** Commit every estimate channel together before exposing the completed batch. */
   publishForecasts(batch: ForecastBatch): Promise<void>;
   onError?(error: unknown): void;
@@ -96,6 +98,7 @@ export function createEstimateService(options: EstimateOptions) {
   const enabled = () => !batteryInvalidated && !['disabled', 'manual_override'].includes(options.readAutomation().status);
 
   async function calculate(at: Date) {
+    try { await options.refreshHousehold?.(); } catch (error) { report(error); }
     const generation = batteryGeneration;
     const dates = ([0, 1, 2] as const).map(offset => dateAt(at, offset));
     const solarHour = Math.floor(at.getTime() / hourMs);

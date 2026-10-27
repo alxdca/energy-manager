@@ -1,4 +1,11 @@
 <div class="history-page" id="history-view">
+  <section class="panel history-controls" aria-labelledby="household-training-heading">
+    <h2 id="household-training-heading">Prévision de consommation maison</h2>
+    <p>Apprentissage quotidien, prévisions toutes les 15 minutes. Consommation totale mesurée, voiture non isolée. Validation en observation avant utilisation pour la batterie.</p>
+    <p id="household-training-status" role="status" aria-live="polite">Chargement de l’apprentissage…</p>
+    <button type="button" id="household-train">Relancer l’apprentissage complet</button>
+    <p id="household-training-error" role="alert" hidden></p>
+  </section>
   <section class="panel history-controls" aria-label="Filtres des données">
     <h2 class="sr-only" id="history-day-heading">Consulter une journée</h2>
     <div class="history-toolbar">

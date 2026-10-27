@@ -101,7 +101,7 @@ function dayTable(day, selection, aggregation = 'quarter') {
   const start = instant(day?.periodStart), end = instant(day?.periodEnd);
   if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end || start % quarterMs !== 0 || end % quarterMs !== 0) return { groups, columns, rows: [], hasData: false };
   const recordedSolar = recordedObservations(day, 'solar'), recordedHouse = recordedObservations(day, 'household');
-  const consumption = estimatedIntervals(day?.energyEstimates, 'estimatedConsumptionKwh');
+  const consumption = estimatedIntervals(day?.householdPredictions ?? day?.energyEstimates, 'estimatedConsumptionKwh');
   const production = estimatedIntervals(day?.solarEstimates, 'estimatedProductionKwh');
   const observations = batteryObservations(day), predictions = batteryPredictions(day);
   const rows = [];

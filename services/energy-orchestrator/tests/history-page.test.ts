@@ -183,4 +183,9 @@ test('history controls render one joined table, use quarter-hour records directl
   assert.ok(Math.abs(Number(series('chart-solar-measured')[0].attributes.get('width')) - 608 / 100 * .34) < 1e-9);
   assert.match(get('chart-frequency').textContent, /Solaire : 15 min/);
 
+  const beforeTrainingRefresh = calls.length;
+  windowEvents.get('household-forecast-updated')?.(); await settle();
+  assert.equal(calls.length, beforeTrainingRefresh + 1, 'finished training invalidates cached predictions');
+  assert.equal(body().children.length, 100, 'training refresh preserves the selected DST day and quarter view');
+
 });
