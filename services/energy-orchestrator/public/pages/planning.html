@@ -1,0 +1,42 @@
+<div class="planner-grid">
+  <section class="panel planner-panel" aria-labelledby="planner-current-heading">
+    <div class="panel-heading"><h2 id="planner-current-heading">Plan batterie</h2><span class="badge neutral" id="planner-mode">—</span></div>
+    <p class="muted" id="planner-period">En attente du prochain bilan</p>
+    <p class="planner-decision" id="planner-reason">En attente du prochain bilan</p>
+    <dl class="planner-metrics">
+      <div><dt>État de charge</dt><dd id="planner-soc">—</dd></div>
+      <div><dt>Énergie disponible</dt><dd id="planner-available">—</dd></div>
+      <div id="planner-window-row" hidden><dt>Créneau de charge</dt><dd id="planner-window">—</dd></div>
+      <div id="planner-start-soc-row" hidden><dt>Batterie estimée au début</dt><dd id="planner-start-soc">—</dd></div>
+      <div id="planner-afternoon-goal-row" hidden><dt id="planner-afternoon-goal-label">Objectif à 16:55</dt><dd id="planner-afternoon-goal">—</dd></div>
+      <div id="planner-afternoon-estimate-row" hidden><dt id="planner-afternoon-estimate-label">Batterie estimée à 16:55</dt><dd id="planner-afternoon-estimate">—</dd></div>
+      <div><dt id="planner-gap-label">À ajouter pour la cible</dt><dd id="planner-gap">—</dd></div>
+      <div><dt>Dont solaire estimé</dt><dd id="planner-gap-solar">—</dd></div>
+      <div><dt>Dont réseau estimé</dt><dd id="planner-gap-grid">—</dd></div>
+      <div id="planner-gap-unmet-row" hidden><dt>Non couvert d’ici l’objectif</dt><dd id="planner-gap-unmet">—</dd></div>
+      <div><dt id="planner-power-label">Consigne de puissance</dt><dd id="planner-power">—</dd></div>
+      <div><dt>Temps de charge restant</dt><dd id="planner-charge-remaining">—</dd></div>
+      <div><dt>Fin de charge estimée</dt><dd id="planner-charge-end">—</dd></div>
+      <div id="planner-hold-row" hidden><dt>Décharge autorisée dès</dt><dd id="planner-hold-until">—</dd></div>
+      <div><dt>Prochain bilan</dt><dd id="planner-next">—</dd></div>
+      <div><dt>Dernier bilan</dt><dd id="planner-last">—</dd></div>
+    </dl>
+  </section>
+  <section class="panel planner-panel car-planner-panel" aria-labelledby="car-planner-heading">
+    <div class="panel-heading"><h2 id="car-planner-heading">Plan Tesla</h2><span class="badge neutral" id="car-planner-status">—</span></div>
+    <p class="planner-decision" id="car-planner-reason">En attente du prochain bilan</p>
+    <dl class="planner-metrics">
+      <div><dt id="car-planner-target-label">Minimum du matin</dt><dd id="car-planner-target">—</dd></div>
+      <div><dt>État de charge</dt><dd id="car-planner-soc">—</dd></div>
+      <div><dt>Énergie de charge à fournir</dt><dd id="car-planner-remaining">—</dd></div>
+      <div><dt>Dont solaire estimé</dt><dd id="car-planner-solar">—</dd></div>
+      <div><dt>Dont réseau estimé</dt><dd id="car-planner-grid">—</dd></div>
+      <div id="car-planner-battery-solar-row" hidden><dt>Batterie · solaire disponible</dt><dd id="car-planner-battery-solar">—</dd></div>
+      <div id="car-planner-battery-reserve-row" hidden><dt>Réserve prochain haut tarif</dt><dd id="car-planner-battery-reserve">—</dd></div>
+      <div><dt>Fin de charge estimée</dt><dd id="car-planner-finish">—</dd></div>
+      <div><dt>Prochain bilan</dt><dd id="car-planner-next">—</dd></div>
+      <div id="car-planner-unmet-row" hidden><dt>Non couvert d’ici le départ</dt><dd id="car-planner-unmet">—</dd></div>
+    </dl>
+    <p class="muted">En mode auto, Éco utilise le surplus solaire. Pendant les créneaux de recharge réseau, la borne passe en mode Normal si le minimum demandé n’est pas atteint.</p>
+  </section>
+</div>

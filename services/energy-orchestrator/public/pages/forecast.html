@@ -1,0 +1,18 @@
+<div class="forecast-stack">
+<section class="panel forecast-panel" id="today-solar-forecast" aria-labelledby="today-forecast-heading" data-state="loading">
+  <div class="forecast-heading"><span class="flow-icon solar-icon"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg></span><div><h2 id="today-forecast-heading">Aujourd’hui <span id="today-forecast-date"></span></h2><span class="forecast-location" id="today-forecast-location"></span></div><span class="forecast-status" id="today-forecast-status">Chargement…</span></div>
+  <div class="forecast-summary"><div class="forecast-production"><strong id="today-forecast-energy">—</strong><span>{{ENERGY_UNIT}}</span><small>Production prévue</small></div><div class="forecast-production"><strong id="today-forecast-consumption">—</strong><span>{{ENERGY_UNIT}}</span><small>Consommation prévue</small></div></div>
+  <details class="daily-energy-details" id="today-daily-energy" hidden>
+    <summary>Relevé du jour</summary>
+    <p class="daily-energy-status" id="today-daily-energy-status"></p>
+    <div class="daily-energy-readings"><div><strong id="today-daily-solar">—</strong><span> kWh</span><small>Production relevée</small></div><div><strong id="today-daily-household">—</strong><span> kWh</span><small>Consommation relevée</small></div></div>
+    <p class="daily-energy-source">Solaire · voiture non isolée</p>
+  </details>
+  <div class="forecast-footer"><span id="today-forecast-updated"></span></div>
+</section>
+<section class="panel forecast-panel" id="solar-forecast" aria-labelledby="forecast-heading" data-state="loading">
+  <div class="forecast-heading"><span class="flow-icon solar-icon"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg></span><div><h2 id="forecast-heading">Demain <span id="forecast-date"></span></h2><span class="forecast-location" id="forecast-location"></span></div><span class="forecast-status" id="forecast-status">Chargement…</span></div>
+  <div class="forecast-summary"><div class="forecast-production"><strong id="forecast-energy">—</strong><span>{{ENERGY_UNIT}}</span><small>Production estimée</small></div><div class="forecast-production"><strong id="forecast-consumption">—</strong><span>{{ENERGY_UNIT}}</span><small>Consommation estimée</small></div></div>
+  <div class="forecast-footer"><span id="forecast-updated"></span></div>
+</section>
+</div>

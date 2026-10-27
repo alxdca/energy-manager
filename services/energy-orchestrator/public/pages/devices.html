@@ -1,0 +1,19 @@
+<section class="panel connections-panel" id="connections" aria-labelledby="connections-heading"><div class="panel-heading"><div><h2 id="connections-heading">Connexions</h2></div></div>
+          <div class="connection-item"><span class="connection-icon"><svg class="icon"><use href="#i-home"/></svg></span><div><strong>Fronius Symo GEN24 10.0 Plus</strong><span>Solaire, maison, réseau et batterie</span></div><span class="connection-state" id="gen24-state">Connexion…</span></div>
+          <div class="connection-item"><span class="connection-icon"><svg class="icon"><use href="#i-battery"/></svg></span><div><strong>Batterie maison</strong><span id="battery-detail">Niveau de charge · via Fronius GEN24</span></div><span class="connection-state" id="battery-state">Lecture…</span></div>
+          <div class="connection-item"><span class="connection-icon"><svg class="icon"><use href="#i-car"/></svg></span><div><strong>{{CAR_NAME}}</strong><span id="tesla-detail">Niveau de charge</span></div><span class="connection-state" id="tesla-state">Lecture…</span></div>
+          <details class="tesla-connection" id="tesla-connection" hidden><summary>Connexion Tesla</summary>
+            <p>Utilisez un jeton de renouvellement de l’API Owner, comme dans TeslaMate. Il reste sur ce serveur. Aucun mot de passe Tesla n’est demandé.</p>
+            <p><a href="https://docs.teslamate.org/docs/installation/tokens" target="_blank" rel="noopener noreferrer">Obtenir les jetons selon le guide TeslaMate</a></p>
+            <form id="tesla-connect-form" autocomplete="off">
+              <label for="tesla-refresh-token">Jeton de renouvellement</label>
+              <input id="tesla-refresh-token" type="password" required minlength="8" maxlength="8192" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="tesla-privacy">
+              <p class="control-hint" id="tesla-privacy">Ce jeton donne accès au compte Tesla. Utilisez une connexion locale de confiance ou HTTPS.</p>
+              <div class="control-actions"><button class="control-apply" type="submit">Connecter</button><button class="control-auto" id="tesla-disconnect" type="button">Déconnecter</button></div>
+            </form>
+            <p class="control-feedback" id="tesla-feedback" role="status" aria-live="polite"></p>
+          </details>
+          <div class="connection-item"><span class="connection-icon"><svg class="icon"><use href="#i-link"/></svg></span><div><strong>Borne de recharge · Wattpilot</strong><span id="wattpilot-detail">État de la borne</span></div><span class="connection-state" id="wattpilot-state">Lecture…</span></div>
+          <div class="connection-item"><span class="connection-icon"><svg class="icon"><use href="#i-sun"/></svg></span><div><strong>Météo</strong><span>Open-Meteo</span></div><span class="connection-state" id="weather-state">Connexion…</span></div>
+          <div class="connection-item"><span class="connection-icon"><svg class="icon"><use href="#i-clock"/></svg></span><div><strong>Planification</strong><span>Recharge automatique</span></div><span class="connection-state" id="planner-state">Lecture…</span></div>
+        </section>

@@ -1,0 +1,32 @@
+{
+  "name": "energy-manager",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Workspace for home energy device control and energy-flow orchestration",
+  "packageManager": "pnpm@10.10.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "start": "pnpm --filter energy-controller start",
+    "start:energy-controller": "pnpm --filter energy-controller start",
+    "start:energy-orchestrator": "pnpm --filter energy-orchestrator start",
+    "dev": "pnpm --filter energy-controller dev",
+    "dev:energy-controller": "pnpm --filter energy-controller dev",
+    "dev:energy-orchestrator": "pnpm --filter energy-orchestrator dev",
+    "dev:all": "pnpm -r --parallel dev",
+    "restore-normal": "pnpm --filter energy-controller restore-normal",
+    "test": "pnpm -r test && pnpm test:integration",
+    "test:integration": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "pnpm -r typecheck && tsc -p tests/tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "dotenv-cli": "^7.4.2",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=26.0.0"
+  }
+}

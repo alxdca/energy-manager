@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="fr-CH">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f6f4">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="{{PAGE_DESCRIPTION}}">
+  <title>{{PAGE_TITLE}} · Energy Manager</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23087e68'/%3E%3Cpath d='M19 5 9 18h7l-3 9 10-14h-7z' fill='white'/%3E%3C/svg%3E">
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/dashboard.css">
+  {{PAGE_STYLES}}
+  {{PAGE_SCRIPTS}}
+</head>
+<body data-page="{{PAGE_KEY}}">
+  <a class="skip-link" href="#main">Aller au tableau de bord</a>
+  <svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-grid" viewBox="0 0 24 24"><path d="m8 3-4 18m12-18 4 18M7 7h10M5.5 13h13M9 3h6M8 21v-4h8v4M8 7l10 6M16 7 6 13"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></symbol>
+    <symbol id="i-battery" viewBox="0 0 24 24"><rect x="3" y="6" width="17" height="12" rx="2"/><path d="M23 10v4M7 10v4m4-4v4m4-4v4"/></symbol>
+    <symbol id="i-car" viewBox="0 0 24 24"><path d="m5 8 2-5h10l2 5M3 16V9l2-1h14l2 1v7H3Zm1 0v4m16-4v4M6 12h2m8 0h2M9 16h6"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m2 11 10-8 10 8M5 9v12h14V9M9 21v-8h6v8"/></symbol>
+    <symbol id="i-overview" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 11a9 9 0 1 1 2.6 7.4M3 4v7h7M12 7v5l3 2"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="m10 7 2-2a5 5 0 0 1 7 7l-2 2m-3 3-2 2a5 5 0 0 1-7-7l2-2m1 6 8-8"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+    <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M5 19C-1 6 12 2 21 3c1 9-3 19-14 15m-3 3L16 9"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.5A9 9 0 0 1 9.5 3.5a9 9 0 1 0 11 11Z"/></symbol>
+    <symbol id="i-controls" viewBox="0 0 24 24"><path d="M4 7h7m6 0h3M4 17h3m6 0h7"/><circle cx="14" cy="7" r="3"/><circle cx="10" cy="17" r="3"/></symbol>
+  </svg>
+
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="Energy Manager — Accueil"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>energy<span class="brand-light">manager</span></span></a>
+    <nav aria-label="Navigation principale">
+      {{PAGE_NAV}}
+    </nav>
+    <div class="sidebar-installation">
+      <span class="eyebrow">VOTRE INSTALLATION</span>
+      <p><svg class="icon"><use href="#i-sun"/></svg><span><strong>8,5 kW</strong> de panneaux solaires</span></p>
+      <p><svg class="icon"><use href="#i-battery"/></svg><span><strong>60 kWh</strong> de stockage maison</span></p>
+      <p><svg class="icon"><use href="#i-car"/></svg><span><strong>{{CAR_NAME}}</strong> · 75 kWh</span></p>
+      <div class="local-note"><span class="dot"></span>Suivi local de l’énergie</div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header class="topbar"><span>ÉNERGIE DOMESTIQUE <span class="breadcrumb">/</span> <strong>{{PAGE_TITLE}}</strong></span><div class="topbar-time"><span id="local-date">{{PAGE_INITIAL_DATE}}</span><span class="divider"></span><strong id="local-time">—</strong><span class="timezone">{{PAGE_TIMEZONE_LABEL}}</span></div></header>
+    <div class="content" id="overview">
+      <section class="page-heading" aria-labelledby="page-title">
+        <div><h1 id="page-title">{{PAGE_TITLE}}</h1></div>
+        <div class="page-actions"><button class="theme-toggle" id="theme-toggle" type="button" aria-label="Basculer le mode sombre" aria-pressed="false" title="Activer le mode sombre"><svg class="icon theme-moon" aria-hidden="true"><use href="#i-moon"/></svg><svg class="icon theme-sun" aria-hidden="true"><use href="#i-sun"/></svg><span id="theme-label">Mode sombre</span></button></div>
+      </section>
+
+      <div class="notice" id="connection-notice" role="status" hidden></div>
+      <p class="sr-only" id="announcements" aria-live="polite" aria-atomic="true"></p>
+
+      {{PAGE_CONTENT}}
+
+    </div>
+    <noscript><p class="notice">Activez JavaScript pour charger les mesures. Les informations de cette page restent consultables.</p></noscript>
+  </main>
+</body>
+</html>

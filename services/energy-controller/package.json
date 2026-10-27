@@ -1,0 +1,24 @@
+{
+  "name": "energy-controller",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Home energy device monitoring and control for the GEN24 inverter and Wattpilot charger",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "dotenv -e .env -- node dist/index.js",
+    "dev": "dotenv -e .env -- tsx watch src/index.ts",
+    "restore-normal": "dotenv -e .env -- tsx scripts/restore-normal.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc -p tsconfig.check.json"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.5",
+    "hono": "^4.9.10",
+    "modbus-serial": "^8.0.17"
+  },
+  "engines": {
+    "node": ">=26.0.0"
+  }
+}

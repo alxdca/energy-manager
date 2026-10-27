@@ -1,0 +1,20 @@
+<div class="tariffs-grid">
+<section class="panel tariff-panel" aria-labelledby="tariff-heading">
+          <div class="panel-heading"><h2 id="tariff-heading">Tarif en cours</h2><svg class="icon muted"><use href="#i-clock"/></svg></div>
+          <span class="badge neutral tariff-badge" id="tariff-badge">Lecture du tarif…</span>
+          <div class="tariff-price"><span id="tariff-price">—</span><small>cts / kWh</small></div>
+          <p class="tariff-until" id="tariff-until">Heure de Zurich</p>
+          <div class="window-summary"><span class="eyebrow">RECHARGE RÉSEAU</span><strong id="window-status">Lecture des horaires…</strong><p id="window-detail">Marge de sécurité.</p></div>
+          
+        </section>
+
+<section class="panel schedule-panel" id="schedule" aria-labelledby="schedule-heading">
+        <div class="panel-heading"><div><h2 id="schedule-heading">Créneaux de recharge</h2></div><span class="schedule-zone">Heure de Zurich</span></div>
+        <div class="day-strip" aria-label="Tarif bas de 23:00 à 07:00 et de 12:00 à 17:00 ; tarif haut de 07:00 à 12:00 et de 17:00 à 23:00."><span class="strip-low" style="flex:7">Tarif bas</span><span class="strip-high" style="flex:5">Tarif haut</span><span class="strip-low" style="flex:5">Tarif bas</span><span class="strip-high" style="flex:6">Tarif haut</span><span class="strip-low last-segment" style="flex:1"></span><span class="now-marker" id="now-marker" hidden><span>Maintenant</span></span></div>
+        <div class="time-axis" aria-hidden="true"><span style="left:0">00:00</span><span style="left:29.1667%">07:00</span><span style="left:50%">12:00</span><span style="left:70.8333%">17:00</span><span style="left:95.8333%">23:00</span><span class="axis-end">24:00</span></div>
+        <div class="window-cards"><div class="window-card"><span class="window-index">01</span><div><span class="eyebrow">NUIT · PRIORITÉ</span><strong>23:05 <span>→</span> 06:55</strong></div><span class="window-tag">7 h 50*</span></div><div class="window-card"><span class="window-index">02</span><div><span class="eyebrow">APRÈS-MIDI · APPOINT</span><strong>12:05 <span>→</span> 16:55</strong></div><span class="window-tag">4 h 50</span></div></div>
+        <p class="schedule-footnote">Début : +5 min · Fin : −5 min · Solaire sans restriction. *Nuit variable au changement d’heure.</p>
+      </section>
+
+<section class="panel limits-panel" aria-labelledby="limits-heading"><div class="panel-heading"><div><h2 id="limits-heading">Limites et objectifs</h2></div></div><dl class="limits"><div><dt>Plafond d’import réseau</dt><dd>15 <span>kW</span></dd></div><div><dt>Charge / décharge batterie</dt><dd>7 <span>kW</span></dd></div><div><dt>Limite de stockage maison</dt><dd>60 <span>kWh</span></dd></div><div><dt>Prochain objectif voiture</dt><dd><b id="car-target-value">—</b><span>%</span></dd></div><div><dt>Rendement estimé</dt><dd>95<span>% aller-retour</span></dd></div></dl><p class="limits-note" id="car-target-summary">60 % lun. / jeu. / sam. / dim. · 50 % mar. / mer. / ven.</p><p class="limits-note">60 % lun / jeu / sam / dim · 50 % mar / mer / ven</p></section>
+</div>

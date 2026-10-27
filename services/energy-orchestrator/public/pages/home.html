@@ -1,0 +1,50 @@
+<section class="panel flow-panel" aria-labelledby="flow-heading">
+  <div class="panel-heading"><h2 id="flow-heading">Flux d’énergie</h2><span class="small-label" id="flow-state">EN ATTENTE</span></div>
+  <div class="flow-stage" id="flow-stage">
+    <svg class="flow-lines" viewBox="0 0 1000 1000" aria-hidden="true">
+      <g id="solar-line" class="flow-link unavailable">
+        <path class="flow-track" d="M500 150L500 500"/>
+        <path class="flow-current" d="M500 150L500 500" pathLength="100"/>
+      </g>
+      <g id="grid-line" class="flow-link unavailable">
+        <path class="flow-track" d="M832.87 391.84L500 500"/>
+        <path class="flow-current" d="M832.87 391.84L500 500" pathLength="100"/>
+      </g>
+      <g id="battery-line" class="flow-link unavailable">
+        <path class="flow-track" d="M167.13 391.84L500 500"/>
+        <path class="flow-current" d="M167.13 391.84L500 500" pathLength="100"/>
+      </g>
+      <g id="car-line" class="flow-link unavailable">
+        <path class="flow-track" d="M705.72 783.16L500 500"/>
+        <path class="flow-current" d="M705.72 783.16L500 500" pathLength="100"/>
+      </g>
+      <g id="home-line" class="flow-link unavailable">
+        <path class="flow-track" d="M294.28 783.16L500 500"/>
+        <path class="flow-current" d="M294.28 783.16L500 500" pathLength="100"/>
+      </g>
+    </svg>
+    <span class="flow-junction" aria-hidden="true"><span></span></span>
+    <div class="flow-node flow-solar" role="group" aria-label="Solaire">
+      <span class="flow-icon solar-icon"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg></span>
+      <span class="flow-name">Solaire</span><strong id="flow-solar">—</strong>
+    </div>
+    <div class="flow-node flow-grid" role="group" aria-label="Réseau">
+      <span class="flow-icon"><svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg></span>
+      <span class="flow-name">Réseau</span><strong id="flow-grid">—</strong><span class="flow-caption" id="flow-grid-direction">Aucune mesure</span>
+    </div>
+    <div class="flow-node flow-battery" role="group" aria-label="Batterie maison">
+      <span class="flow-icon battery-icon"><svg class="icon" aria-hidden="true"><use href="#i-battery"/></svg></span>
+      <span class="flow-name flow-full-name">Batterie maison</span><span class="flow-name flow-short-name">Batterie</span><strong id="flow-battery">—</strong>
+      <div class="flow-meta"><span id="flow-battery-direction">Aucune mesure</span><span class="flow-soc" id="flow-battery-soc">—</span></div>
+    </div>
+    <div class="flow-node flow-car" role="group" aria-label="Voiture">
+      <span class="flow-icon"><svg class="icon" aria-hidden="true"><use href="#i-car"/></svg></span>
+      <span class="flow-name">{{CAR_NAME}}</span><strong id="flow-car-soc">—</strong><span class="flow-caption" id="flow-car-power">—</span><span class="flow-caption" id="flow-car-state">Non connectée</span>
+    </div>
+    <div class="flow-node flow-home" role="group" aria-label="Consommation maison">
+      <span class="flow-icon"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg></span>
+      <span class="flow-name">Maison</span><strong id="flow-home">—</strong>
+    </div>
+  </div>
+  <div class="flow-footer" id="flow-battery-charge-estimate" title="Au rythme observé" hidden></div>
+</section>

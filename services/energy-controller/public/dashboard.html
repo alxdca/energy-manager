@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Energy Controller Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #ffffff;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .control-btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+
+        .start-btn {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .start-btn:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+        }
+
+        .stop-btn {
+            background: #f44336;
+            color: white;
+        }
+
+        .stop-btn:hover {
+            background: #d32f2f;
+            transform: translateY(-2px);
+        }
+
+        .status {
+            text-align: center;
+            margin: 20px 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .status.connected {
+            color: #4CAF50;
+        }
+
+        .status.disconnected {
+            color: #f44336;
+        }
+
+        .chart-container {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .chart-wrapper {
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 10px;
+            padding: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .chart-title {
+            text-align: center;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            font-weight: 600;
+        }
+
+        canvas {
+            max-height: 400px;
+            width: 100% !important;
+        }
+
+        .data-display {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .data-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .data-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .data-label {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+
+        .data-unit {
+            font-size: 0.8em;
+            opacity: 0.7;
+        }
+
+        .pv { border-left: 4px solid #FFC107; }
+        .grid { border-left: 4px solid #2196F3; }
+        .battery { border-left: 4px solid #4CAF50; }
+        .load { border-left: 4px solid #FF9800; }
+
+        .positive { color: #4CAF50; }
+        .negative { color: #f44336; }
+        .zero { color: #FFC107; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚡ Energy Controller Dashboard</h1>
+
+        <div class="controls">
+            <button class="control-btn start-btn" onclick="startMonitoring()">▶️ Start Monitoring</button>
+            <button class="control-btn stop-btn" onclick="stopMonitoring()">⏹️ Stop Monitoring</button>
+        </div>
+
+        <div class="status" id="status">Disconnected</div>
+
+        <div class="data-display">
+            <div class="data-card pv">
+                <div class="data-label">Solar Power</div>
+                <div class="data-value" id="pv-value">-</div>
+                <div class="data-unit">W</div>
+            </div>
+            <div class="data-card grid">
+                <div class="data-label">Grid Power</div>
+                <div class="data-value" id="grid-value">-</div>
+                <div class="data-unit">W</div>
+            </div>
+            <div class="data-card battery">
+                <div class="data-label">Battery Power</div>
+                <div class="data-value" id="battery-value">-</div>
+                <div class="data-unit">W</div>
+            </div>
+            <div class="data-card load">
+                <div class="data-label">Load Power</div>
+                <div class="data-value" id="load-value">-</div>
+                <div class="data-unit">W</div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-wrapper">
+                <div class="chart-title">⚡ All Power Flows (Real-time)</div>
+                <canvas id="combinedChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Chart instances
+        let combinedChart;
+
+        // Data arrays (last 100 points for each metric)
+        const maxDataPoints = 100;
+        const pvData = [];
+        const gridData = [];
+        const batteryData = [];
+        const loadData = [];
+        const timeLabels = [];
+
+        // Track if we should add real or copy value (for step effect)
+        let addRealValue = true;
+
+        // Monitoring state
+        let monitoringInterval = null;
+        let isMonitoring = false;
+
+        // Initialize charts
+        function initCharts() {
+            const combinedChartConfig = {
+                type: 'line',
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: {
+                        x: {
+                            display: true,
+                            title: {
+                                display: true,
+                                text: 'Time'
+                            }
+                        },
+                        y: {
+                            display: true,
+                            title: {
+                                display: true,
+                                text: 'Power (W)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 20,
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    }
+                }
+            };
+
+            // Combined chart with all power metrics
+            combinedChart = new Chart(document.getElementById('combinedChart'), {
+                ...combinedChartConfig,
+                data: {
+                    labels: timeLabels,
+                    datasets: [
+                        {
+                            label: 'Solar Power (P_PV)',
+                            data: pvData,
+                            borderColor: '#FFC107',
+                            backgroundColor: 'rgba(255, 193, 7, 0.1)',
+                            borderWidth: 3,
+                            fill: false,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 4
+                        },
+                        {
+                            label: 'Grid Power (P_Grid)',
+                            data: gridData,
+                            borderColor: '#2196F3',
+                            backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                            borderWidth: 3,
+                            fill: false,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 4
+                        },
+                        {
+                            label: 'Battery Power (P_Akku)',
+                            data: batteryData,
+                            borderColor: '#4CAF50',
+                            backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                            borderWidth: 3,
+                            fill: false,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 4
+                        },
+                        {
+                            label: 'Load Power (P_Load)',
+                            data: loadData,
+                            borderColor: '#FF9800',
+                            backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                            borderWidth: 3,
+                            fill: false,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 4
+                        }
+                    ]
+                }
+            });
+        }
+
+        // Update data displays
+        function updateDataDisplays(data) {
+            // Extract values from the site data (raw Fronius power flow values)
+            const pvValue = data?.site?.P_PV || 0;
+            const gridValue = data?.site?.P_Grid || 0;
+            const batteryValue = data?.site?.P_Akku || 0;
+            const loadValue = data?.site?.P_Load || 0;
+
+            // Debug: Log the values being used
+            console.log('Dashboard Values:', {
+                pvValue,
+                gridValue,
+                batteryValue,
+                loadValue,
+                fullData: data
+            });
+
+            document.getElementById('pv-value').textContent = Math.round(pvValue);
+            document.getElementById('grid-value').textContent = Math.round(gridValue);
+            document.getElementById('battery-value').textContent = Math.round(batteryValue);
+            document.getElementById('load-value').textContent = Math.round(loadValue);
+
+            // Update colors based on values
+            updateValueColor('pv-value', pvValue);
+            updateValueColor('grid-value', gridValue);
+            updateValueColor('battery-value', batteryValue);
+            updateValueColor('load-value', loadValue);
+        }
+
+        // Update value colors
+        function updateValueColor(elementId, value) {
+            const element = document.getElementById(elementId);
+            element.classList.remove('positive', 'negative', 'zero');
+
+            if (value > 0) {
+                element.classList.add('positive');
+            } else if (value < 0) {
+                element.classList.add('negative');
+            } else {
+                element.classList.add('zero');
+            }
+        }
+
+        // Fetch data from our API endpoint (which gets data from Fronius)
+        async function fetchData() {
+            try {
+                const response = await fetch('/system/status', { signal: AbortSignal.timeout(15000) });
+                const data = await response.json();
+
+                if (data.success && data.site) {
+                    // Debug: Log the data we're using
+                    console.log('Dashboard API Response:', data);
+                    return data;
+                } else {
+                    throw new Error('Invalid response from API');
+                }
+            } catch (error) {
+                console.error('Error fetching dashboard data:', error);
+                return null;
+            }
+        }
+
+        // Update charts with new data and interpolation
+        function updateCharts(data) {
+            if (!data) return;
+
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString();
+
+            // Add new data points from the site data (raw Fronius values)
+            const newPvValue = data?.site?.P_PV || 0;
+            const newGridValue = data?.site?.P_Grid || 0;
+            const newBatteryValue = data?.site?.P_Akku || 0;
+            const newLoadValue = data?.site?.P_Load || 0;
+
+            // Add data point based on whether we should add real or copy value
+            if (addRealValue) {
+                // Add real sample
+                pvData.push(newPvValue);
+                gridData.push(newGridValue);
+                batteryData.push(newBatteryValue);
+                loadData.push(newLoadValue);
+                addRealValue = false; // Next addition will be a copy
+            } else {
+                // Add copy of the most recent real sample
+                if (pvData.length > 0) {
+                    pvData.push(pvData[pvData.length - 1]);
+                    gridData.push(gridData[gridData.length - 1]);
+                    batteryData.push(batteryData[batteryData.length - 1]);
+                    loadData.push(loadData[loadData.length - 1]);
+                    addRealValue = true; // Next addition will be real
+                }
+            }
+            timeLabels.push(timeStr);
+
+            // Keep only last maxDataPoints points
+            if (pvData.length > maxDataPoints) {
+                const excessPoints = pvData.length - maxDataPoints;
+                for (let i = 0; i < excessPoints; i++) {
+                    pvData.shift();
+                    gridData.shift();
+                    batteryData.shift();
+                    loadData.shift();
+                    timeLabels.shift();
+                }
+            }
+
+            // Update combined chart
+            combinedChart.update('none');
+        }
+
+        // Monitoring function: schedule the next read only after the current one finishes.
+        let requestInFlight = false;
+        let monitoringGeneration = 0;
+        async function monitoringFunction() {
+            if (!isMonitoring || requestInFlight) return;
+            requestInFlight = true;
+            const generation = monitoringGeneration;
+            try {
+                const data = await fetchData();
+                if (!isMonitoring || generation !== monitoringGeneration) return;
+                if (data) {
+                    updateDataDisplays(data);
+                    updateCharts(data);
+                    document.getElementById('status').textContent = 'Connected - Monitoring Active';
+                    document.getElementById('status').className = 'status connected';
+                } else {
+                    document.getElementById('status').textContent = 'Connection Error';
+                    document.getElementById('status').className = 'status disconnected';
+                }
+            } finally {
+                requestInFlight = false;
+                if (isMonitoring) monitoringInterval = setTimeout(monitoringFunction, 5000);
+            }
+        }
+
+        function startMonitoring() {
+            if (isMonitoring) return;
+            isMonitoring = true;
+            monitoringGeneration++;
+            monitoringFunction();
+        }
+
+        function stopMonitoring() {
+            isMonitoring = false;
+            monitoringGeneration++;
+            if (monitoringInterval) {
+                clearTimeout(monitoringInterval);
+                monitoringInterval = null;
+            }
+            document.getElementById('status').textContent = 'Disconnected';
+            document.getElementById('status').className = 'status disconnected';
+        }
+
+        // Initialize when page loads
+        window.addEventListener('load', () => {
+            initCharts();
+            console.log('Energy Dashboard initialized');
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            stopMonitoring();
+        });
+    </script>
+</body>
+</html>

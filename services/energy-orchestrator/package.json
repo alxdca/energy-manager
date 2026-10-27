@@ -1,0 +1,27 @@
+{
+  "name": "energy-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Home energy dashboard, manual battery controls and energy-flow orchestration scaffold",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "dotenv -e .env -- node dist/index.js",
+    "dev": "dotenv -e .env -- tsx watch src/index.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test:postgres": "node --import tsx --test tests/postgres-history.test.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.5",
+    "hono": "^4.9.10",
+    "pg": "^8.23.1"
+  },
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}
