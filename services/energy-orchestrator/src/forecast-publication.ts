@@ -17,7 +17,7 @@ export interface PublishedForecast {
     consumption: ConsumptionForecast | null;
     carEstimates?: CarEstimatePoint[];
     /** Sums of all persisted forecast rows in the Zurich calendar day, including past quarters. */
-    dailyTotals?: { date: string; productionKwh: number | null; consumptionKwh: number | null };
+    dailyTotals?: { date: string; productionKwh: number | null; consumptionKwh: number | null; chargingKwh?: number | null };
     forecastPeriod: { start: string; end: string; from: string };
   };
   projection: BatteryProjection;

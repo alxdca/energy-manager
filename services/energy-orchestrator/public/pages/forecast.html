@@ -2,16 +2,18 @@
 <section class="panel forecast-panel" id="today-solar-forecast" aria-labelledby="today-forecast-heading" data-state="loading">
   <div class="forecast-heading"><span class="flow-icon solar-icon"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg></span><div><h2 id="today-forecast-heading">Aujourd’hui <span id="today-forecast-date"></span></h2><span class="forecast-location" id="today-forecast-location"></span></div><span class="forecast-status" id="today-forecast-status">Chargement…</span></div>
   <div class="daily-energy-actuals" id="today-daily-energy" hidden>
-    <div class="forecast-summary"><div class="forecast-production"><strong id="today-daily-solar">—</strong><span>{{ENERGY_UNIT}}</span><small>Production relevée</small></div><div class="forecast-production"><strong id="today-daily-household">—</strong><span>{{ENERGY_UNIT}}</span><small>Consommation relevée</small></div><div class="forecast-production" id="today-daily-car-reading" hidden><strong id="today-daily-car">—</strong><span>{{ENERGY_UNIT}}</span><small>Recharge voiture</small></div></div>
-    <p class="daily-energy-status" id="today-daily-energy-status"></p>
-    <p class="daily-energy-source" id="today-daily-energy-source"></p>
+    <h3 class="forecast-group-title" id="today-observations-heading">Observations</h3>
+    <div class="forecast-summary" role="group" aria-labelledby="today-observations-heading"><div class="forecast-production"><strong id="today-daily-solar">—</strong><span>{{ENERGY_UNIT}}</span><small>Production</small></div><div class="forecast-production"><strong id="today-daily-household">—</strong><span>{{ENERGY_UNIT}}</span><small>Consommation</small></div><div class="forecast-production"><strong id="today-daily-car">—</strong><span>{{ENERGY_UNIT}}</span><small>Recharge</small></div></div>
+    <p class="daily-energy-status" id="today-daily-energy-status" hidden></p>
   </div>
-  <div class="forecast-summary"><div class="forecast-production"><strong id="today-forecast-energy">—</strong><span>{{ENERGY_UNIT}}</span><small>Production prévue</small></div><div class="forecast-production"><strong id="today-forecast-consumption">—</strong><span>{{ENERGY_UNIT}}</span><small>Consommation prévue</small></div></div>
+  <h3 class="forecast-group-title" id="today-forecast-group-heading">Prévisions</h3>
+  <div class="forecast-summary" role="group" aria-labelledby="today-forecast-group-heading"><div class="forecast-production"><strong id="today-forecast-energy">—</strong><span>{{ENERGY_UNIT}}</span><small>Production</small></div><div class="forecast-production"><strong id="today-forecast-consumption">—</strong><span>{{ENERGY_UNIT}}</span><small>Consommation</small></div><div class="forecast-production"><strong id="today-forecast-car">—</strong><span>{{ENERGY_UNIT}}</span><small>Recharge</small></div></div>
   <div class="forecast-footer"><span id="today-forecast-updated"></span></div>
 </section>
 <section class="panel forecast-panel" id="solar-forecast" aria-labelledby="forecast-heading" data-state="loading">
   <div class="forecast-heading"><span class="flow-icon solar-icon"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg></span><div><h2 id="forecast-heading">Demain <span id="forecast-date"></span></h2><span class="forecast-location" id="forecast-location"></span></div><span class="forecast-status" id="forecast-status">Chargement…</span></div>
-  <div class="forecast-summary"><div class="forecast-production"><strong id="forecast-energy">—</strong><span>{{ENERGY_UNIT}}</span><small>Production estimée</small></div><div class="forecast-production"><strong id="forecast-consumption">—</strong><span>{{ENERGY_UNIT}}</span><small>Consommation estimée</small></div></div>
+  <h3 class="forecast-group-title" id="forecast-group-heading">Prévisions</h3>
+  <div class="forecast-summary" role="group" aria-labelledby="forecast-group-heading"><div class="forecast-production"><strong id="forecast-energy">—</strong><span>{{ENERGY_UNIT}}</span><small>Production</small></div><div class="forecast-production"><strong id="forecast-consumption">—</strong><span>{{ENERGY_UNIT}}</span><small>Consommation</small></div><div class="forecast-production"><strong id="forecast-car">—</strong><span>{{ENERGY_UNIT}}</span><small>Recharge</small></div></div>
   <div class="forecast-footer"><span id="forecast-updated"></span></div>
 </section>
 </div>

@@ -134,12 +134,14 @@
     const labels = states[state];
     const panel = scoped('solar-forecast');
     if (panel) panel.dataset.state = state;
-    write('forecast-energy', available ? `≈ ${decimal.format(productionTotal)}` : '—');
+    write('forecast-energy', available ? decimal.format(productionTotal) : '—');
     const hasConsumption = storedDay ? numeric(consumptionTotal) : validDate(data.date) && consumption && typeof consumption === 'object'
       && consumption.date === data.date && (learned ? ['measured_history', 'recent_average', 'configured_baseline', 'mixed'].includes(consumption.source) && consumption.scope === 'household_excluding_car' && consumption.excludesCar === true
         : consumption.source === 'configured_baseline' && consumption.excludesCar === true)
       && numeric(consumptionTotal) && consumptionTotal >= 0;
-    write('forecast-consumption', hasConsumption ? `≈ ${integer.format(consumptionTotal)}` : '—');
+    write('forecast-consumption', hasConsumption ? integer.format(consumptionTotal) : '—');
+    const chargingTotal = storedTotal('chargingKwh');
+    write('forecast-car', chargingTotal !== null ? decimal.format(chargingTotal) : '—');
     write('forecast-date', available || hasConsumption ? dateFormat.format(new Date(`${data.date}T12:00:00Z`)) : '');
     write('forecast-location', typeof data.locationName === 'string' ? data.locationName : '');
     const details = [];

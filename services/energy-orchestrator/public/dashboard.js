@@ -77,9 +77,8 @@
       text('today-daily-solar', '—');
       text('today-daily-household', '—');
       text('today-daily-car', '—');
-      if (byId('today-daily-car-reading')) byId('today-daily-car-reading').hidden = true;
-      text('today-daily-energy-source', '');
       text('today-daily-energy-status', '');
+      if (byId('today-daily-energy-status')) byId('today-daily-energy-status').hidden = true;
     };
     if (document.body.dataset.page === 'previsions') return clear();
     const observed = typeof updatedAt === 'string' ? new Date(updatedAt) : null;
@@ -108,8 +107,8 @@
         || !['ready', 'error'].includes(summary.storageStatus) || !knownSource
         || summary.householdIncludesCar !== false || !validMetric(summary.solar) || !validMetric(summary.household)
         || summary.car !== undefined && !validMetric(summary.car)) return clear();
-    const samples = summary.solar.sampleCount + summary.household.sampleCount + (summary.car?.sampleCount ?? 0);
-    text('today-daily-energy-status', `${summary.storageStatus === 'error' ? 'Enregistrement indisponible · ' : ''}${samples} relevés d’énergie conservés`);
+    text('today-daily-energy-status', summary.storageStatus === 'error' ? 'Enregistrement indisponible' : '');
+    if (byId('today-daily-energy-status')) byId('today-daily-energy-status').hidden = summary.storageStatus !== 'error';
     const times = [summary.solar.firstObservedAt, summary.household.firstObservedAt,
       summary.solar.lastObservedAt, summary.household.lastObservedAt,
       summary.car?.firstObservedAt, summary.car?.lastObservedAt].filter(at => typeof at === 'string').sort();
@@ -117,8 +116,6 @@
     for (const [id, metric] of [['today-daily-solar', summary.solar], ['today-daily-household', summary.household]]) {
       text(id, metric.energyKwh === null ? '—' : dailyEnergyFormatter.format(metric.energyKwh));
     }
-    text('today-daily-energy-source', 'Maison hors recharge voiture');
-    if (byId('today-daily-car-reading')) byId('today-daily-car-reading').hidden = !summary.car;
     text('today-daily-car', summary.car?.energyKwh == null ? '—' : dailyEnergyFormatter.format(summary.car.energyKwh));
     details.setAttribute('data-state', summary.storageStatus === 'error' ? 'error' : 'partial');
     details.hidden = false;

@@ -149,7 +149,7 @@ main{margin-left:220px;min-width:0}.topbar{height:74px;border-bottom:1px solid v
 .desktop-home-forecast{display:none}
 body[data-page=previsions] .forecast-panel{margin-top:0;max-width:760px}
 @media(min-width:701px){
-  .home-overview{display:grid;grid-template-columns:minmax(0,1fr) clamp(240px,26vw,320px);gap:20px;align-items:stretch}
+  .home-overview{display:grid;grid-template-columns:minmax(0,1fr) clamp(260px,30vw,360px);gap:20px;align-items:stretch}
   .desktop-home-forecast{display:grid;min-width:0}
   .desktop-home-forecast .forecast-stack{grid-template-rows:repeat(2,minmax(min-content,1fr))}
   .desktop-home-forecast .forecast-panel{display:flex;flex-direction:column;margin:0;padding:20px}
@@ -178,7 +178,14 @@ body[data-page=previsions] .forecast-panel{margin-top:0;max-width:760px}
 @media(max-width:700px){.forecast-stack{gap:16px}}
 
 .daily-energy-actuals{border-bottom:1px solid var(--line);padding-bottom:14px}
-.daily-energy-status,.daily-energy-source{margin:8px 0 0;font-size:11px;color:var(--muted)}
+.forecast-group-title{margin:16px 0 0;font-size:11px;font-weight:600;color:var(--muted)}
+.forecast-stack .forecast-panel .forecast-group-title+.forecast-summary{margin-top:8px}
+.forecast-stack .forecast-panel .forecast-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start;gap:10px}
+.forecast-stack .forecast-panel .forecast-production{min-width:0;gap:4px}
+.forecast-stack .forecast-panel .forecast-production strong{font-size:clamp(18px,2vw,28px);letter-spacing:-.5px}
+.forecast-stack .forecast-panel .forecast-production>span{font-size:11px}
+.forecast-stack .forecast-panel .forecast-production small{font-size:10px;line-height:1.4;overflow-wrap:anywhere}
+.daily-energy-status{margin:8px 0 0;font-size:11px;color:var(--muted)}
 .daily-energy-actuals[data-state=error] .daily-energy-status{color:var(--amber)}
 
 /* Energy charts shared by the recorded history view. */

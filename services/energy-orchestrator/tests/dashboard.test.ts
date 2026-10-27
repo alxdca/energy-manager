@@ -1725,7 +1725,7 @@ test('home accepts retained energy values with real timestamps without claiming 
   assert.equal(b.get('today-daily-energy').hidden, false);
   assert.equal(b.get('today-daily-solar').textContent, '1,3');
   assert.equal(b.get('today-daily-household').textContent, '0');
-  assert.match(b.get('today-daily-energy-status').textContent, /2 relevés/);
+  assert.equal(b.get('today-daily-energy-status').textContent, '');
   assert.doesNotMatch(b.get('today-daily-energy-status').textContent, /couvertes|Journée complète/);
   assert.match(b.get('today-daily-energy').getAttribute('title')!, /11:59:29/);
   assert.match(b.get('today-daily-energy').getAttribute('title')!, /11:59:30/);
@@ -1733,39 +1733,40 @@ test('home accepts retained energy values with real timestamps without claiming 
 
 test('daily readings appear above the home forecasts with matching value styles', async () => {
   const b = browser('accueil');
-  b.get('today-forecast-energy').textContent = '≈ 18,3';
-  b.get('today-forecast-consumption').textContent = '≈ 29';
+  b.get('today-forecast-energy').textContent = '18,3';
+  b.get('today-forecast-consumption').textContent = '29';
   await b.complete(dailySnapshot());
   assert.equal(b.get('today-daily-energy').hidden, false);
   assert.equal(b.get('today-daily-solar').textContent, '4,2');
   assert.equal(b.get('today-daily-household').textContent, '7,9');
-  assert.equal(b.get('today-daily-energy-status').textContent, '3 relevés d’énergie conservés');
-  assert.equal(b.get('today-forecast-energy').textContent, '≈ 18,3');
-  assert.equal(b.get('today-forecast-consumption').textContent, '≈ 29');
+  assert.equal(b.get('today-daily-energy-status').textContent, '');
+  assert.equal(b.get('today-daily-energy-status').hidden, true);
+  assert.equal(b.get('today-forecast-energy').textContent, '18,3');
+  assert.equal(b.get('today-forecast-consumption').textContent, '29');
   assert.equal(b.requests.length, 1);
   assert.match(pages.accueil, /<div class="daily-energy-actuals" id="today-daily-energy" hidden>/);
   assert.doesNotMatch(pages.accueil, /Relevé du jour/);
   assert.ok(pages.accueil.indexOf('id="today-daily-household"') < pages.accueil.indexOf('id="today-forecast-energy"'));
-  for (const id of ['today-daily-solar', 'today-daily-household', 'today-forecast-energy', 'today-forecast-consumption']) {
+  for (const id of ['today-daily-solar', 'today-daily-household', 'today-daily-car', 'today-forecast-energy', 'today-forecast-consumption', 'today-forecast-car']) {
     assert.ok(pages.accueil.includes(`<div class="forecast-production"><strong id="${id}">`));
   }
-  assert.match(pages.accueil, /Production relevée/);
-  assert.match(pages.accueil, /Consommation relevée/);
-  assert.match(pages.accueil, /id="today-daily-energy-source"/);
+  assert.match(pages.accueil, /id="today-observations-heading">Observations<\/h3>/);
+  assert.match(pages.accueil, /id="today-forecast-group-heading">Prévisions<\/h3>/);
+  assert.doesNotMatch(pages.accueil, /today-daily-energy-source|Maison hors recharge voiture/);
   assert.equal((pages.accueil.match(/id="today-daily-energy"/g) ?? []).length, 1);
 });
 
 test('daily readings distinguish missing data and measured zero without claiming complete coverage', async () => {
   const b = browser('accueil');
   await b.complete(dailySnapshot(dailyEnergy({ status: 'unavailable', solar: dailyMetric(null, 0), household: dailyMetric(null, 0) })));
-  assert.equal(b.get('today-daily-energy-status').textContent, '0 relevés d’énergie conservés');
+  assert.equal(b.get('today-daily-energy-status').textContent, '');
   assert.equal(b.get('today-daily-solar').textContent, '—');
   assert.equal(b.get('today-daily-household').textContent, '—');
   b.fireTimer(10000);
   await b.complete(dailySnapshot(dailyEnergy({ solar: dailyMetric(0, 1), household: dailyMetric(0, 1) })));
   assert.equal(b.get('today-daily-solar').textContent, '0');
   assert.equal(b.get('today-daily-household').textContent, '0');
-  assert.equal(b.get('today-daily-energy-status').textContent, '2 relevés d’énergie conservés');
+  assert.equal(b.get('today-daily-energy-status').textContent, '');
   assert.doesNotMatch(b.get('today-daily-energy-status').textContent, /couvertes|complète/);
 });
 
@@ -1774,14 +1775,11 @@ test('house-only daily readings show separate charging and clear it when reading
   await b.complete(dailySnapshot(dailyEnergy({ householdIncludesCar: false, car: dailyMetric(2, 1) })));
   assert.equal(b.get('today-daily-household').textContent, '7,9');
   assert.equal(b.get('today-daily-car').textContent, '2');
-  assert.equal(b.get('today-daily-car-reading').hidden, false);
-  assert.match(b.get('today-daily-energy-source').textContent, /Maison hors recharge voiture/);
   b.fireTimer(10000);
   await b.complete(dailySnapshot(dailyEnergy({ householdIncludesCar: false, car: dailyMetric(0, 1) })));
   assert.equal(b.get('today-daily-car').textContent, '0');
   b.fireTimer(10000);
   await b.complete(dailySnapshot(null));
-  assert.equal(b.get('today-daily-car-reading').hidden, true);
   assert.equal(b.get('today-daily-car').textContent, '—');
 });
 
@@ -1792,9 +1790,14 @@ test('historical daily readings survive controller outages and storage errors st
   assert.equal(b.get('today-daily-energy').hidden, false);
   b.fireTimer(10000);
   await b.complete(dailySnapshot(dailyEnergy({ storageStatus: 'error', error: 'write failed', status: 'complete' })));
-  assert.equal(b.get('today-daily-energy-status').textContent, 'Enregistrement indisponible · 3 relevés d’énergie conservés');
+  assert.equal(b.get('today-daily-energy-status').textContent, 'Enregistrement indisponible');
+  assert.equal(b.get('today-daily-energy-status').hidden, false);
   assert.equal(b.get('today-daily-energy').getAttribute('data-state'), 'error');
   assert.equal(b.get('today-daily-household').textContent, '7,9');
+  b.fireTimer(10000);
+  await b.complete(dailySnapshot());
+  assert.equal(b.get('today-daily-energy-status').textContent, '');
+  assert.equal(b.get('today-daily-energy-status').hidden, true);
 });
 
 test('missing, malformed and wrong-date daily summaries hide and clear recorded values', async () => {
@@ -1873,7 +1876,7 @@ test('one unobserved daily metric remains unknown while the observed metric is s
   assert.equal(b.get('today-daily-energy').hidden, false);
   assert.equal(b.get('today-daily-solar').textContent, '—');
   assert.equal(b.get('today-daily-household').textContent, '0');
-  assert.equal(b.get('today-daily-energy-status').textContent, '300 relevés d’énergie conservés');
+  assert.equal(b.get('today-daily-energy-status').textContent, '');
 });
 
 

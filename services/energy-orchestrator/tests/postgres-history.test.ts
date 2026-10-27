@@ -624,7 +624,7 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
       forecasts: [{ ...solar(), consumption: estimateConsumption(date, { baselinePowerW: 500 }) }],
       projection: projection(now.toISOString()) });
     const bounds = getCalendarDayBounds(new Date(`${date}T00:00:00Z`));
-    for (const channel of ['solar', 'house']) {
+    for (const channel of ['solar', 'house', 'car']) {
       await f.admin.query(`DELETE FROM energy_history.${channel}_forecasts`);
       for (const [time, energy] of [
         [new Date(bounds.start.getTime() - 900_000), 100], [bounds.start, 1],
@@ -636,12 +636,16 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
     const shown = await (await api.request('/api/forecast/today')).json();
     const expected = await f.admin.query(`SELECT
       (SELECT SUM(energy_kwh) FROM energy_history.solar_forecasts WHERE interval_start >= $1 AND interval_start < $2) AS production,
-      (SELECT SUM(energy_kwh) FROM energy_history.house_forecasts WHERE interval_start >= $1 AND interval_start < $2) AS consumption`, [bounds.start, bounds.end]);
-    assert.deepEqual(shown.dailyTotals, { date, productionKwh: expected.rows[0].production, consumptionKwh: expected.rows[0].consumption });
-    assert.deepEqual(shown.dailyTotals, { date, productionKwh: 10, consumptionKwh: 10 });
+      (SELECT SUM(energy_kwh) FROM energy_history.house_forecasts WHERE interval_start >= $1 AND interval_start < $2) AS consumption,
+      (SELECT SUM(energy_kwh) FROM energy_history.car_forecasts WHERE interval_start >= $1 AND interval_start < $2) AS charging`, [bounds.start, bounds.end]);
+    assert.deepEqual(shown.dailyTotals, { date, productionKwh: expected.rows[0].production, consumptionKwh: expected.rows[0].consumption, chargingKwh: expected.rows[0].charging });
+    assert.deepEqual(shown.dailyTotals, { date, productionKwh: 10, consumptionKwh: 10, chargingKwh: 10 });
     await f.admin.query('DELETE FROM energy_history.solar_forecasts');
     await f.admin.query('UPDATE energy_history.house_forecasts SET energy_kwh=0');
-    assert.deepEqual((await history.readForecast(date))!.forecast.dailyTotals, { date, productionKwh: null, consumptionKwh: 0 });
+    await f.admin.query('UPDATE energy_history.car_forecasts SET energy_kwh=0');
+    assert.deepEqual((await history.readForecast(date))!.forecast.dailyTotals, { date, productionKwh: null, consumptionKwh: 0, chargingKwh: 0 });
+    await f.admin.query('DELETE FROM energy_history.car_forecasts');
+    assert.equal((await history.readForecast(date))!.forecast.dailyTotals!.chargingKwh, null);
   });
 
   await t.test('daily sums use all 23 or 25 hours on Zurich daylight-saving days', async t => {
@@ -657,7 +661,7 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
       await history.publishForecasts({ calculatedAt: start.toISOString(), forecasts: [forecast], projection: projection(start.toISOString()) });
       const totals = (await history.readForecast(targetDate))!.forecast.dailyTotals;
       const hours = (end.getTime() - start.getTime()) / 3_600_000;
-      assert.deepEqual(totals, { date: targetDate, productionKwh: hours, consumptionKwh: hours });
+      assert.deepEqual(totals, { date: targetDate, productionKwh: hours, consumptionKwh: hours, chargingKwh: null });
     }
   });
 

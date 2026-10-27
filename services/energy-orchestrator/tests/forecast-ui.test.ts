@@ -11,7 +11,7 @@ const script = readFileSync(new URL('../public/forecast.js', import.meta.url), '
 const decimal = (value: number) => value.toLocaleString('fr-CH', { maximumFractionDigits: 1 });
 const integer = (value: number) => value.toLocaleString('fr-CH', { maximumFractionDigits: 0 });
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const panelIds = ['solar-forecast', 'forecast-date', 'forecast-energy', 'forecast-location', 'forecast-updated', 'forecast-status', 'forecast-consumption'];
+const panelIds = ['solar-forecast', 'forecast-date', 'forecast-energy', 'forecast-location', 'forecast-updated', 'forecast-status', 'forecast-consumption', 'forecast-car'];
 
 class Element {
   textContent = '';
@@ -89,7 +89,7 @@ function forecast(overrides: Record<string, unknown> = {}) {
 test('forecast renders production, weather and distinct Zurich refresh times for the quarter-hour batch and solar', async () => {
   const b = browser();
   await b.complete(forecast({ estimates: { calculatedAt: '2026-10-24T10:15:00Z' } }));
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(12.6)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(12.6)}`);
   assert.equal(b.get('forecast-date').textContent, 'dim. 25 oct.');
   assert.equal(b.get('forecast-updated').textContent, 'Bilan : 12:15 · Solaire : 12:00');
   assert.equal(b.get('forecast-location').textContent, 'Installation de démonstration');
@@ -103,7 +103,7 @@ test('forecast renders production, weather and distinct Zurich refresh times for
 test('real zero remains visible while missing or invalid energy clears the estimate', async () => {
   const b = browser();
   await b.complete(forecast({ estimatedProductionKwh: 0, weatherCode: null, temperatureMinC: null, temperatureMaxC: null }));
-  assert.equal(b.get('forecast-energy').textContent, '≈ 0');
+  assert.equal(b.get('forecast-energy').textContent, '0');
   assert.equal(b.get('forecast-status').textContent, 'Météo indisponible');
   for (const value of [null, -1, '12', undefined]) {
     b.fireTimer(10000);
@@ -116,7 +116,7 @@ test('real zero remains visible while missing or invalid energy clears the estim
 test('stale energy retains a visible warning and offline data clears previous values', async () => {
   const b = browser();
   await b.complete(forecast({ status: 'stale' }));
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(12.6)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(12.6)}`);
   assert.equal(b.get('forecast-status').textContent, 'Averses - 7–14 °C · À actualiser');
   assert.equal(b.get('solar-forecast').dataset.state, 'stale');
   b.fireTimer(10000);
@@ -156,7 +156,7 @@ test('requests are serialized, retry five seconds after completion and time out 
   assert.equal(b.requests.length, 2);
   await b.complete(forecast());
   await b.complete(forecast({ estimatedProductionKwh: 99 }), 0);
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(12.6)}`, 'A late timed-out result must not overwrite the current forecast');
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(12.6)}`, 'A late timed-out result must not overwrite the current forecast');
   assert.equal([...b.timers.values()].filter(timer => timer.milliseconds === 10000).length, 1);
 });
 
@@ -198,7 +198,7 @@ test('mobile home does not poll and desktop resume fetches a fresh forecast', as
   b.resize(true);
   assert.equal(b.requests.length, 2);
   await b.complete(forecast({ estimatedProductionKwh: 4 }));
-  assert.equal(b.get('forecast-energy').textContent, '≈ 4');
+  assert.equal(b.get('forecast-energy').textContent, '4');
 });
 
 test('desktop home aborts hidden reads and ignores late success or failure after resizing', async () => {
@@ -212,14 +212,14 @@ test('desktop home aborts hidden reads and ignores late success or failure after
   assert.equal(b.get('forecast-energy').textContent, '');
   assert.equal([...b.timers.values()].some(timer => timer.milliseconds === 10000), false);
   await b.complete(forecast({ estimatedProductionKwh: 5 }), 1);
-  assert.equal(b.get('forecast-energy').textContent, '≈ 5');
+  assert.equal(b.get('forecast-energy').textContent, '5');
   b.fireTimer(10000);
   b.resize(false);
   b.resize(true);
   await b.complete(forecast({ estimatedProductionKwh: 7 }), 3);
   b.requests[2].reject(new Error('Delayed aborted request'));
   await tick();
-  assert.equal(b.get('forecast-energy').textContent, '≈ 7');
+  assert.equal(b.get('forecast-energy').textContent, '7');
   assert.equal([...b.timers.values()].filter(timer => timer.milliseconds === 10000).length, 1);
 });
 
@@ -244,7 +244,7 @@ test('home forecast requires both desktop width and a visible document to resume
   assert.equal(b.requests.length, 2);
   await b.complete(forecast(), 1);
   await b.complete(forecast({ estimatedProductionKwh: 99 }), 0);
-  assert.equal(b.get('forecast-energy').textContent, '≈ 12,6');
+  assert.equal(b.get('forecast-energy').textContent, '12,6');
 });
 
 test('Appareils continues polling on mobile', async () => {
@@ -296,15 +296,15 @@ const consumption = (overrides: Record<string, unknown> = {}) => ({
 test('configured household consumption shows one rounded daily estimate', async () => {
   const b = browser();
   await b.complete(forecast({ consumption: consumption() }));
-  assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(12.5)}`);
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(12.6)}`);
+  assert.equal(b.get('forecast-consumption').textContent, `${integer(12.5)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(12.6)}`);
 });
 
 test('consumption remains available independently of missing solar or weather configuration', async () => {
   const b = browser();
   for (const status of ['offline', 'not_configured']) {
     await b.complete(forecast({ status, estimatedProductionKwh: null, consumption: consumption() }));
-    assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(12.5)}`);
+    assert.equal(b.get('forecast-consumption').textContent, `${integer(12.5)}`);
     assert.equal(b.get('forecast-energy').textContent, '—');
     assert.equal(b.get('forecast-date').textContent, 'dim. 25 oct.');
     assert.equal(b.get('forecast-status').textContent, status === 'offline' ? 'Solaire indisponible' : 'Solaire à configurer');
@@ -320,7 +320,7 @@ test('missing, malformed or wrong-date consumption never invents a zero or chang
     consumption({ estimatedConsumptionKwh: NaN }), consumption({ source: 'measured' }), consumption({ excludesCar: false })]) {
     await b.complete(forecast({ consumption: value }));
     assert.equal(b.get('forecast-consumption').textContent, '—');
-    assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(12.6)}`);
+    assert.equal(b.get('forecast-energy').textContent, `${decimal(12.6)}`);
     b.fireTimer(10000);
   }
 });
@@ -328,7 +328,7 @@ test('missing, malformed or wrong-date consumption never invents a zero or chang
 test('real zero consumption is valid and a transport failure clears old configured estimates', async () => {
   const b = browser();
   await b.complete(forecast({ consumption: consumption({ estimatedConsumptionKwh: 0 }) }));
-  assert.equal(b.get('forecast-consumption').textContent, '≈ 0');
+  assert.equal(b.get('forecast-consumption').textContent, '0');
   b.fireTimer(10000);
   await b.complete({}, undefined, 503);
   assert.equal(b.get('forecast-consumption').textContent, '—');
@@ -340,7 +340,7 @@ test('baseline consumption remains available regardless of solar weather status'
   const b = browser();
   for (const status of ['online', 'stale', 'offline', 'not_configured'] as const) {
     await b.complete(forecast({ status, consumption: consumption() }));
-    assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(12.5)}`);
+    assert.equal(b.get('forecast-consumption').textContent, `${integer(12.5)}`);
     b.fireTimer(10000);
   }
   await b.complete({}, undefined, 503);
@@ -351,10 +351,10 @@ test('baseline consumption remains available regardless of solar weather status'
 test('daily production keeps its available decimal regardless of the selected model', async () => {
   const b = browser();
   await b.complete(forecast({ estimatedProductionKwh: 3.14, weatherModel: 'meteoswiss_icon_ch2' }));
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(3.14)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(3.14)}`);
   b.fireTimer(10000);
   await b.complete(forecast({ estimatedProductionKwh: 0.04, weatherModel: 'best_match' }));
-  assert.equal(b.get('forecast-energy').textContent, '≈ 0');
+  assert.equal(b.get('forecast-energy').textContent, '0');
   b.fireTimer(10000);
   await b.complete(forecast({ status: 'offline', estimatedProductionKwh: null }));
   assert.equal(b.get('forecast-energy').textContent, '—');
@@ -366,35 +366,35 @@ test('today and tomorrow render separate full-day production and consumption est
   await b.complete(forecast({ date: '2026-10-24', estimatedProductionKwh: 18.3, weatherCode: 61, temperatureMinC: 6, temperatureMaxC: 12,
     consumption: consumption({ date: '2026-10-24', estimatedConsumptionKwh: 29 }) }), 0);
   await b.complete(forecast({ estimatedProductionKwh: 3.5, consumption: consumption() }), 1);
-  assert.equal(b.get('today-forecast-energy').textContent, `≈ ${decimal(18.3)}`);
-  assert.equal(b.get('today-forecast-consumption').textContent, `≈ ${integer(29.0)}`);
+  assert.equal(b.get('today-forecast-energy').textContent, `${decimal(18.3)}`);
+  assert.equal(b.get('today-forecast-consumption').textContent, `${integer(29.0)}`);
   assert.equal(b.get('today-forecast-date').textContent, 'sam. 24 oct.');
   assert.equal(b.get('today-forecast-status').textContent, 'Pluie - 6–12 °C');
   assert.equal(b.get('forecast-status').textContent, 'Averses - 7–14 °C');
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(3.5)}`);
-  assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(12.5)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(3.5)}`);
+  assert.equal(b.get('forecast-consumption').textContent, `${integer(12.5)}`);
   assert.equal(b.get('forecast-date').textContent, 'dim. 25 oct.');
 });
 
 test('each card isolates transport failure, timeout, retries and late completions', async () => {
   const b = browser({ both: true });
   await b.complete(forecast({ consumption: consumption() }), 1);
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(12.6)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(12.6)}`);
   b.fireTimer(8000);
   await tick();
   assert.equal(b.requests[0].signal.aborted, true);
   assert.equal(b.get('today-forecast-status').textContent, 'Indisponible');
-  assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(12.5)}`);
+  assert.equal(b.get('forecast-consumption').textContent, `${integer(12.5)}`);
   b.fireTimer(10000);
   assert.equal(b.requests[2].url, '/api/forecast');
   b.fireTimer(10000);
   assert.equal(b.requests[3].url, '/api/forecast/today');
   await b.complete(forecast({ date: '2026-10-24', estimatedProductionKwh: 5 }), 3);
   await b.complete(forecast({ estimatedProductionKwh: 99 }), 0);
-  assert.equal(b.get('today-forecast-energy').textContent, `≈ ${decimal(5.0)}`);
+  assert.equal(b.get('today-forecast-energy').textContent, `${decimal(5.0)}`);
   await b.complete({}, 2, 503);
   assert.equal(b.get('forecast-energy').textContent, '—');
-  assert.equal(b.get('today-forecast-energy').textContent, `≈ ${decimal(5.0)}`);
+  assert.equal(b.get('today-forecast-energy').textContent, `${decimal(5.0)}`);
 });
 
 test('desktop home hides both readers on mobile and rejects their late results after resize', async () => {
@@ -414,8 +414,8 @@ test('desktop home hides both readers on mobile and rejects their late results a
   await b.complete(forecast({ estimatedProductionKwh: 99 }), 0);
   b.requests[1].reject(new Error('Late hidden failure'));
   await tick();
-  assert.equal(b.get('today-forecast-energy').textContent, '≈ 8');
-  assert.equal(b.get('forecast-energy').textContent, '≈ 9');
+  assert.equal(b.get('today-forecast-energy').textContent, '8');
+  assert.equal(b.get('forecast-energy').textContent, '9');
   assert.equal([...b.timers.values()].filter(timer => timer.milliseconds === 10000).length, 2);
 });
 
@@ -435,21 +435,21 @@ test('document visibility pauses both readers and reloads both independently', a
   await b.complete(forecast({ estimatedProductionKwh: 8 }), 3);
   await b.complete(forecast({ estimatedProductionKwh: 99 }), 0);
   await b.complete(forecast({ estimatedProductionKwh: 99 }), 1);
-  assert.equal(b.get('today-forecast-energy').textContent, `≈ ${decimal(7.0)}`);
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(8.0)}`);
+  assert.equal(b.get('today-forecast-energy').textContent, `${decimal(7.0)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(8.0)}`);
 });
 
 test('today uses the same zero, stale, source and fallback validation as tomorrow', async () => {
   const b = browser({ both: true });
   await b.complete(forecast({ date: '2026-10-24', status: 'stale', estimatedProductionKwh: 0,
     consumption: consumption({ date: '2026-10-24' }) }), 0);
-  assert.equal(b.get('today-forecast-energy').textContent, '≈ 0');
+  assert.equal(b.get('today-forecast-energy').textContent, '0');
   assert.equal(b.get('today-forecast-status').textContent, 'Averses - 7–14 °C · À actualiser');
   b.fireTimer(10000);
   await b.complete(forecast({ date: '2026-10-24', status: 'offline', estimatedProductionKwh: null,
     consumption: consumption({ date: '2026-10-24' }) }), 2);
   assert.equal(b.get('today-forecast-energy').textContent, '—');
-  assert.equal(b.get('today-forecast-consumption').textContent, `≈ ${integer(12.5)}`);
+  assert.equal(b.get('today-forecast-consumption').textContent, `${integer(12.5)}`);
   b.fireTimer(10000);
   await b.complete(forecast({ date: '2026-10-24', consumption: consumption({ date: '2026-10-24', source: 'measured' }) }), 3);
   assert.equal(b.get('today-forecast-consumption').textContent, '—');
@@ -465,10 +465,13 @@ test('Appareils never fetches today and shared markup identifies the published f
   assert.ok(markup.indexOf('id="today-solar-forecast"') < markup.indexOf('id="solar-forecast"'));
   assert.match(markup, /id="today-forecast-heading">Aujourd’hui /);
   assert.match(markup, /id="forecast-heading">Demain /);
-  assert.match(markup, /Production prévue/);
-  assert.equal((markup.match(/Production estimée/g) ?? []).length, 1);
-  assert.match(markup, /Consommation prévue/);
-  assert.equal((markup.match(/Consommation estimée/g) ?? []).length, 1);
+  assert.match(markup, /id="today-observations-heading">Observations<\/h3>/);
+  assert.match(markup, /id="today-forecast-group-heading">Prévisions<\/h3>/);
+  assert.match(markup, /id="forecast-group-heading">Prévisions<\/h3>/);
+  for (const label of ['Production', 'Consommation', 'Recharge']) {
+    assert.equal(markup.split(`<small>${label}</small>`).length - 1, 3);
+  }
+  assert.doesNotMatch(markup, /relevée|estimée|prévue/);
   assert.doesNotMatch(markup, /Solaire et météo|Open-Meteo|ICON-CH2|CC BY|estimation dérivée|forecast-consumption-source|forecast-weather-model/);
   const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
   assert.equal(new Set(ids).size, ids.length);
@@ -581,10 +584,11 @@ test('Today displays database day sums independently of time, missing quarters a
     const b = browser({ both: true, now: at });
     const value = { ...committedForecast(futureSource(), new Date(at)),
       hourly: null, quarterHourly: null, householdForecast: null,
-      dailyTotals: { date: '2026-10-24', productionKwh: 42.3, consumptionKwh: 31 } };
+      dailyTotals: { date: '2026-10-24', productionKwh: 42.3, consumptionKwh: 31, chargingKwh: 8.5 } };
     await b.complete(value, 0);
-    assert.equal(b.get('today-forecast-energy').textContent, `≈ ${decimal(42.3)}`);
-    assert.equal(b.get('today-forecast-consumption').textContent, `≈ ${integer(31)}`);
+    assert.equal(b.get('today-forecast-energy').textContent, `${decimal(42.3)}`);
+    assert.equal(b.get('today-forecast-consumption').textContent, `${integer(31)}`);
+    assert.equal(b.get('today-forecast-car').textContent, `${decimal(8.5)}`);
     assert.equal(b.get('today-solar-forecast').dataset.state, 'online');
     assert.equal(b.get('forecast-energy').textContent, '', 'Today does not write tomorrow’s totals');
   }
@@ -593,8 +597,8 @@ test('Today displays database day sums independently of time, missing quarters a
 test('stored daily sums survive weather outages and distinguish zero, empty and invalid channels', async () => {
   const b = browser({ both: true });
   for (const [productionKwh, consumptionKwh, production, consumption] of [
-    [4.2, 7, `≈ ${decimal(4.2)}`, '≈ 7'], [0, 0, '≈ 0', '≈ 0'],
-    [null, 7, '—', '≈ 7'], [4.2, null, `≈ ${decimal(4.2)}`, '—'],
+    [4.2, 7, `${decimal(4.2)}`, '7'], [0, 0, '0', '0'],
+    [null, 7, '—', '7'], [4.2, null, `${decimal(4.2)}`, '—'],
     [-1, '7', '—', '—'], [null, null, '—', '—'],
   ]) {
     await b.complete(forecast({ status: 'offline', date: '2026-10-24',
@@ -607,6 +611,30 @@ test('stored daily sums survive weather outages and distinguish zero, empty and 
   assert.equal(b.get('today-forecast-energy').textContent, '—');
   assert.equal(b.get('today-forecast-consumption').textContent, '—');
 });
+
+for (const [label, prefix, endpoint, date] of [
+  ['Today', 'today-', '/api/forecast/today', '2026-10-24'],
+  ['Tomorrow', '', '/api/forecast', '2026-10-25'],
+]) {
+  test(`${label} shows saved charging totals, preserves zero and clears missing or invalid forecasts`, async () => {
+    const b = browser({ both: true });
+    const requestIndex = () => b.requests.map(request => request.url).lastIndexOf(endpoint);
+    for (const [chargingKwh, expected] of [[8.5, `${decimal(8.5)}`], [0, '0'], [null, '—'], [undefined, '—'], [-1, '—'], ['8', '—']]) {
+      const index = requestIndex();
+      await b.complete(forecast({ status: 'offline', date,
+        dailyTotals: { date, productionKwh: null, consumptionKwh: null, chargingKwh } }), index);
+      assert.equal(b.get(`${prefix}forecast-car`).textContent, expected);
+      assert.equal(b.get(prefix ? 'forecast-car' : 'today-forecast-car').textContent, '');
+      b.fireTimer(10000);
+    }
+    await b.complete(forecast({ date, dailyTotals: { date: '2026-10-23', chargingKwh: 8.5 } }), requestIndex());
+    assert.equal(b.get(`${prefix}forecast-car`).textContent, '—');
+    b.fireTimer(10000);
+    b.requests[requestIndex()].reject(new Error('offline'));
+    await tick();
+    assert.equal(b.get(`${prefix}forecast-car`).textContent, '—');
+  });
+}
 
 test('the same committed forecast keeps its displayed energy when browser time advances', async () => {
   const at = '2026-10-24T12:22:30Z';
@@ -626,11 +654,11 @@ test('a saved daily total does not change when the browser crosses Zurich midnig
   const b = browser({ now: '2026-10-24T21:59:59Z' });
   const payload = forecast();
   await b.complete(payload);
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(12.6)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(12.6)}`);
   b.advance(2000);
   b.fireTimer(10000);
   await b.complete(payload);
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(12.6)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(12.6)}`);
 });
 
 test('a new committed batch replaces forecast quarters while the same batch remains unchanged', async () => {
@@ -641,16 +669,16 @@ test('a new committed batch replaces forecast quarters while the same batch rema
   b.advance(30 * 60_000);
   b.fireTimer(10000);
   await b.complete(value);
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(60.0)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(60.0)}`);
   b.fireTimer(10000);
   await b.complete(committedForecast(futureSource(), new Date('2026-10-24T12:52:30Z')));
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(60.0)}`);
-  assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(10.0)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(60.0)}`);
+  assert.equal(b.get('forecast-consumption').textContent, `${integer(10.0)}`);
   b.advance(7.5 * 60_000);
   b.fireTimer(10000);
   await b.complete(committedForecast(futureSource(), new Date('2026-10-24T13:00:00Z')));
-  assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(54.0)}`);
-  assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(9.0)}`);
+  assert.equal(b.get('forecast-energy').textContent, `${decimal(54.0)}`);
+  assert.equal(b.get('forecast-consumption').textContent, `${integer(9.0)}`);
 });
 
 test('remaining windows reject missing hours, malformed quarter coverage and inconsistent totals', async () => {
@@ -688,8 +716,8 @@ test('full-hour forecasts preserve valid 23/25-hour Zurich calendars in daily to
     const value = committedForecast(source, new Date(at));
     await b.complete(value);
     const remaining = (Date.parse(value.forecastPeriod.end) - Date.parse(value.forecastPeriod.from)) / 3600000;
-    assert.equal(b.get('forecast-energy').textContent, `≈ ${decimal(remaining * 6)}`);
-    assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(remaining)}`);
+    assert.equal(b.get('forecast-energy').textContent, `${decimal(remaining * 6)}`);
+    assert.equal(b.get('forecast-consumption').textContent, `${integer(remaining)}`);
   }
 });
 
@@ -701,7 +729,7 @@ test('learned household totals use their full-day slots independently of solar r
   const b = browser();
   const source = committedForecast(futureSource(), at);
   await b.complete({ ...source, householdForecast });
-  assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(48)}`);
+  assert.equal(b.get('forecast-consumption').textContent, `${integer(48)}`);
   b.fireTimer(10000);
   await b.complete({ ...source, householdForecast: null });
   assert.equal(b.get('forecast-consumption').textContent, '—');
@@ -717,9 +745,9 @@ test('household fallbacks display complete totals for baseline and recent averag
   const source = committedForecast(futureSource(), at);
   const baseline = applyHouseholdFallback(raw, [], { baselinePowerW: 1000, windowHours: 24 });
   await b.complete({ ...source, householdForecast: baseline });
-  assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(24)}`);
+  assert.equal(b.get('forecast-consumption').textContent, `${integer(24)}`);
   b.fireTimer(10000);
   const samples = Array.from({ length: 4 }, (_, i) => ({ at: new Date(at.getTime() - i * 900000 - 30000).toISOString(), value: 500 }));
   await b.complete({ ...source, householdForecast: applyHouseholdFallback(raw, samples, { baselinePowerW: 1000, windowHours: 24 }) });
-  assert.equal(b.get('forecast-consumption').textContent, `≈ ${integer(48)}`);
+  assert.equal(b.get('forecast-consumption').textContent, `${integer(48)}`);
 });
