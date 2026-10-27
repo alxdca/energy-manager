@@ -87,6 +87,8 @@ test('learning settings use runtime values and absent metrics stay unknown while
   b.fire(30000);
   await b.complete({ state: 'idle', training: { usableDays: 0, completeSamplingDays: 0, observations: 0, weatherDays: 0 } });
   assert.equal(b.get('learning-observations').textContent, '0');
+  assert.equal(b.get('learning-state').textContent, 'En attente de mesures');
+  assert.match(b.status.textContent, /Aucune mesure maison hors recharge voiture/);
 });
 
 test('saved forecast coverage distinguishes learned and fallback slots and clears failed reads', async () => {

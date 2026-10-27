@@ -113,7 +113,7 @@ test('daily energy API exposes recorded readings and never invokes weather', asy
   assert.equal(day.solar.energyKwh, .03);
   assert.equal(day.household.energyKwh, .02);
   assert.equal(day.solarSource, 'GEN24 PV (DC)');
-  assert.equal(day.householdIncludesCar, true);
+  assert.equal(day.householdIncludesCar, false);
   assert.deepEqual((await (await api.request('/api/status')).json()).dailyEnergy, day);
   assert.deepEqual((await (await api.request('/api/energy/days?limit=1')).json()).days, [day]);
   assert.deepEqual(points, original, 'read routes do not mutate recorded observations');

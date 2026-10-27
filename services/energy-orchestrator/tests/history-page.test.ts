@@ -124,7 +124,7 @@ test('history controls render one joined table, use quarter-hour records directl
   assert.match(body().children[0].children[0].title, /00:00:00 → .*00:15:00/);
   assert.equal(body().children.at(-1)!.children[0].textContent, '23:45–24:00');
   assert.equal(body().children[0].children.length, 9, 'one time column plus eight values');
-  assert.equal(body().children[0].children[8].textContent, '50', 'battery uses the dedicated quarter-hour history');
+  assert.equal(body().children[0].children[6].textContent, '50', 'battery uses the dedicated quarter-hour history');
   const measuredHouse = checkboxes.find(node => node.value === 'houseMeasured')!;
   measuredHouse.checked = false; measuredHouse.fire('change');
   assert.equal(body().children[0].children.length, 8);

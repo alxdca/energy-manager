@@ -102,7 +102,7 @@ The **orchestrator** owns the dashboard, history, forecasts and energy policy. T
 
 **The current policy is specific.** Battery automation plans at quarter-hour intervals, charging at up to 6 kW within buffered low-tariff windows of 23:05–06:55 and 12:05–16:55. It yields to a 16 kW total-consumption ceiling. These are application constraints for the original installation, not a guarantee of electrical protection.
 
-**Forecasts are estimates.** Household demand currently uses a configured constant baseline, excluding the car. Learned household profiles use verified measurements excluding car charging; older history remains labelled as including the car. Charging energy is recorded separately using the Wattpilot meter, and measured solar is GEN24 PV DC, so comparisons need that context. Missing data remains unknown.
+**Forecasts are estimates.** Household demand currently uses a configured constant baseline, excluding the car. Learned household profiles use verified measurements excluding car charging; house and car observations are stored separately using the Wattpilot charging meter, and measured solar is GEN24 PV DC, so comparisons need that context. Missing data remains unknown.
 
 **Supervision has boundaries.** GEN24 control uses expiring inverter command leases. Wattpilot automation uses controller-owned software leases; a hardware expiry has not been verified, so cleanup depends on the controller remaining available.
 

@@ -16,6 +16,8 @@ export interface PublishedForecast {
   forecast: SolarForecast & {
     consumption: ConsumptionForecast | null;
     carEstimates?: CarEstimatePoint[];
+    /** Sums of all persisted forecast rows in the Zurich calendar day, including past quarters. */
+    dailyTotals?: { date: string; productionKwh: number | null; consumptionKwh: number | null };
     forecastPeriod: { start: string; end: string; from: string };
   };
   projection: BatteryProjection;

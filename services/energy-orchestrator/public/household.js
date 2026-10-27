@@ -30,10 +30,12 @@
   let pending = false, timer, wasTraining = false;
   function show(data) {
     const running = data.state === 'training';
-    text('learning-state', running ? 'En cours' : data.state === 'error' ? 'Erreur' : data.modelId ? 'Actif' : 'En attente');
+    const empty = data.training?.observations === 0;
+    text('learning-state', running ? 'En cours' : data.state === 'error' ? 'Erreur' : empty ? 'En attente de mesures' : data.modelId ? 'Actif' : 'En attente');
     const trained = date(data.lastTrainedAt);
     status.textContent = running ? 'Apprentissage complet en cours…'
       : data.error ? 'Le dernier cycle a échoué. Nouvelle tentative automatique au prochain bilan.'
+        : empty ? 'Aucune mesure maison hors recharge voiture disponible pour apprendre. Nouvelle tentative automatique au prochain bilan.'
         : trained !== '—' ? `Dernier apprentissage : ${trained}${data.weatherStatus === 'calibrated' ? ' · correction météo apprise' : ''}`
           : 'Le premier apprentissage attend le prochain bilan.';
     text('learning-last', trained);

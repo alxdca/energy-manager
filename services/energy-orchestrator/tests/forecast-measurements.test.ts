@@ -33,7 +33,7 @@ test('forecast responses include recorded readings without weather, and future h
   assert.equal(measured.reduce((sum: number, hour: any) => sum + hour.solar.energyKwh, 0), .03);
   assert.equal(measured.reduce((sum: number, hour: any) => sum + hour.household.energyKwh, 0), .06);
   assert.equal(today.measurements.solarSource, 'GEN24 PV (DC)');
-  assert.equal(today.measurements.householdIncludesCar, true);
+  assert.equal(today.measurements.householdIncludesCar, false);
   assert.ok(measured.some((hour: { end: string }) => Date.parse(hour.end) < now().getTime()),
     'past observations must not be removed with past predictions');
   const tomorrow = await (await api.request('/api/forecast')).json();

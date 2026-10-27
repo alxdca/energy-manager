@@ -119,19 +119,23 @@
     const consumption = learned ? data.householdForecast : data.consumption;
     const consumptionForecast = consumption ? publishedSeries(learned ? { date: data.date } : data, consumption.hourly, learned ? consumption.slots : consumption.quarterHourly,
       'estimatedConsumptionKwh', consumption.estimatedConsumptionKwh, .001) : null;
-    const productionTotal = productionForecast?.total
+    const storedDay = Object.hasOwn(data, 'dailyTotals');
+    const totals = data.dailyTotals;
+    const storedTotal = key => validDate(data.date) && totals?.date === data.date
+      && numeric(totals[key]) && totals[key] >= 0 ? totals[key] : null;
+    const productionTotal = storedDay ? storedTotal('productionKwh') : productionForecast?.total
       ?? (data.hourly == null && data.quarterHourly == null ? data.estimatedProductionKwh : null);
-    const consumptionTotal = consumptionForecast?.total
+    const consumptionTotal = storedDay ? storedTotal('consumptionKwh') : consumptionForecast?.total
       ?? (!learned && consumption?.hourly == null && consumption?.quarterHourly == null ? consumption?.estimatedConsumptionKwh : null);
     let state = Object.hasOwn(states, data.status) ? data.status : 'offline';
     if ((state === 'online' || state === 'stale')
       && (!validDate(data.date) || !numeric(productionTotal) || productionTotal < 0)) state = 'offline';
-    const available = state === 'online' || state === 'stale';
+    const available = storedDay ? numeric(productionTotal) : state === 'online' || state === 'stale';
     const labels = states[state];
     const panel = scoped('solar-forecast');
     if (panel) panel.dataset.state = state;
     write('forecast-energy', available ? `≈ ${decimal.format(productionTotal)}` : '—');
-    const hasConsumption = validDate(data.date) && consumption && typeof consumption === 'object'
+    const hasConsumption = storedDay ? numeric(consumptionTotal) : validDate(data.date) && consumption && typeof consumption === 'object'
       && consumption.date === data.date && (learned ? ['measured_history', 'recent_average', 'configured_baseline', 'mixed'].includes(consumption.source) && consumption.scope === 'household_excluding_car' && consumption.excludesCar === true
         : consumption.source === 'configured_baseline' && consumption.excludesCar === true)
       && numeric(consumptionTotal) && consumptionTotal >= 0;

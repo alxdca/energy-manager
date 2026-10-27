@@ -35,7 +35,11 @@ export function createHouseholdService(options: {
   let error: string | null = null;
   let lastAttempt: number | null = null;
   const status = (): HouseholdTrainingStatus => ({ state: training || requestedTraining ? 'training' : error ? 'error' : 'idle', error,
-    lastTrainedAt: model?.trainedAt ?? null, nextTrainingAt: model?.validUntil ?? null, modelId: model?.id ?? null,
+    lastTrainedAt: model?.trainedAt ?? null,
+    nextTrainingAt: model?.training.observations === 0
+      ? new Date(Math.ceil(Math.max(now().getTime(), (lastAttempt ?? 0) + 900_000) / 900_000) * 900_000).toISOString()
+      : model?.validUntil ?? null,
+    modelId: model?.id ?? null,
     training: model?.training ?? null, weatherStatus: model?.weatherStatus ?? null, mode: 'observation', scope: 'household_excluding_car',
     modelVersion: model?.version ?? null, calibration: model?.calibration ? { ...model.calibration } : null,
     settings: { ...householdLearningSettings, automaticTraining: 'daily', fallback: { ...fallback } } });
@@ -45,6 +49,7 @@ export function createHouseholdService(options: {
       const at = now(), today = getLocalDate(at);
       const mustTrain = forceTraining || !model || model.version !== householdModelVersion || model.trainingDate !== today
         || model.training.to !== today
+        || model.training.observations === 0
         || Date.parse(model.validUntil) <= at.getTime();
       const mayRetry = forceTraining || lastAttempt === null || at.getTime() - lastAttempt >= 15 * 60_000;
       let historyUnavailable = false;

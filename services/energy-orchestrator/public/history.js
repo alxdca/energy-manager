@@ -196,8 +196,8 @@ function initializeHistory() {
     if (!state.day) return;
     const date = formatHistoryValue(state.date, { type: 'date' });
     const count = (Date.parse(state.day.periodEnd) - Date.parse(state.day.periodStart)) / (state.view === 'hour' ? 3600000 : 900000);
-    const scope = state.day.dailyEnergy?.householdIncludesCar === false ? 'Maison hors recharge voiture' : 'Recharge voiture incluse';
-    elements['day-summary'].textContent = `${date} · ${state.view === 'hour' ? `${count} heures` : `${count} pas de 15 min`} · ${scope}${state.day.dailyEnergy?.separationIncomplete ? ' · séparation partielle' : ''}`;
+    const scope = 'Maison hors recharge voiture';
+    elements['day-summary'].textContent = `${date} · ${state.view === 'hour' ? `${count} heures` : `${count} pas de 15 min`} · ${scope}`;
   }
   function updateSelection() {
     elements['selection-count'].textContent = `${selection.size} valeur${selection.size > 1 ? 's' : ''}`;

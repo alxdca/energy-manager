@@ -10,7 +10,7 @@ const earliest = (before: string | null | undefined, at: string) => before === n
 const latest = (before: string | null | undefined, at: string) => before === null || before === undefined || at > before ? at : before;
 
 /** Sum retained energy readings whole, by their real timestamps, without reconstructing coverage. */
-export function summarizeRecordedEnergy(date: string, points: { solar: ObservationPoint[]; household: ObservationPoint[] },
+export function summarizeRecordedEnergy(date: string, points: { solar: ObservationPoint[]; household: ObservationPoint[]; car?: ObservationPoint[] },
   now: Date): { dailyEnergy: DailyEnergySummary; measurements: HourlyEnergySummary } {
   const day = new Date(`${date}T00:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(day.getTime()) || day.toISOString().slice(0, 10) !== date) {
@@ -53,32 +53,21 @@ export function summarizeRecordedEnergy(date: string, points: { solar: Observati
   const last = [totals.solar.lastObservedAt, totals.household.lastObservedAt].filter((at): at is string => typeof at === 'string').sort();
   const metadata = { date, timeZone, dayHours: hours.length, method: 'recorded_energy' as const,
     solarSource: 'GEN24 PV (DC)' as const, householdSource: 'GEN24 household (AC)' as const,
-    householdIncludesCar: true as const, storageStatus: 'ready' as const, error: null } as const;
-  return { dailyEnergy: { ...metadata, expectedSeconds: (until - from) / 1000,
+    householdIncludesCar: false as const, storageStatus: 'ready' as const, error: null } as const;
+  const result: { dailyEnergy: DailyEnergySummary; measurements: HourlyEnergySummary } = { dailyEnergy: { ...metadata, expectedSeconds: (until - from) / 1000,
     status: totals.solar.energyKwh !== null || totals.household.energyKwh !== null ? 'partial' : 'unavailable', ...totals,
     firstObservationAt: first[0] ?? null, lastObservationAt: last.at(-1) ?? null },
     measurements: { ...metadata, dayHours: hours.length as 23 | 24 | 25, hours, quarterHours } };
-}
-
-/** New days expose verified house-only intervals; raw totals remain available independently. */
-export function summarizeSeparatedEnergy(date: string, points: { solar: ObservationPoint[]; household: ObservationPoint[];
-  car: ObservationPoint[]; totalHousehold: ObservationPoint[] }, now: Date) {
-  const summary = summarizeRecordedEnergy(date, points, now);
-  const extras = summarizeRecordedEnergy(date, { solar: points.car, household: points.totalHousehold }, now);
-  const quarters = (values: ObservationPoint[]) => new Set(values.map(point => Math.floor(Date.parse(point.at) / 900_000)));
-  const known = quarters(points.household);
-  const incomplete = [...quarters(points.totalHousehold)].some(quarter => !known.has(quarter));
-  for (const value of [summary.dailyEnergy, summary.measurements]) {
-    value.householdIncludesCar = false;
-    value.car = extras.dailyEnergy.solar;
-    value.totalHousehold = extras.dailyEnergy.household;
-    value.separationIncomplete = incomplete;
+  if (points.car !== undefined) {
+    const charging = summarizeRecordedEnergy(date, { solar: points.car, household: [] }, now);
+    result.dailyEnergy.car = charging.dailyEnergy.solar;
+    result.measurements.car = charging.dailyEnergy.solar;
+    if (result.dailyEnergy.car.energyKwh !== null) result.dailyEnergy.status = 'partial';
+    if (result.dailyEnergy.car.firstObservedAt) result.dailyEnergy.firstObservationAt = earliest(result.dailyEnergy.firstObservationAt, result.dailyEnergy.car.firstObservedAt);
+    if (result.dailyEnergy.car.lastObservedAt) result.dailyEnergy.lastObservationAt = latest(result.dailyEnergy.lastObservationAt, result.dailyEnergy.car.lastObservedAt);
+    for (const key of ['hours', 'quarterHours'] as const) {
+      result.measurements[key]?.forEach((period, i) => { period.car = charging.measurements[key]![i].solar; });
+    }
   }
-  for (const key of ['hours', 'quarterHours'] as const) {
-    summary.measurements[key]?.forEach((hour, i) => {
-      hour.car = extras.measurements[key]![i].solar;
-      hour.totalHousehold = extras.measurements[key]![i].household;
-    });
-  }
-  return summary;
+  return result;
 }

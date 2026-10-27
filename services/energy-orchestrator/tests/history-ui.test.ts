@@ -103,8 +103,8 @@ test('chart aligns energy totals and latest SOC at the same period-end timestamp
 });
 
 test('the joined table exposes separate car charging alongside household values from quarter-hour history without timestamps or source versions', () => {
-  assert.deepEqual(historyGroups.map((group: any) => [group.id, group.label]), [['solar', 'Solaire'], ['house', 'Maison'], ['car', 'Voiture'], ['battery', 'Batterie']]);
-  assert.deepEqual(allHistorySelection, ['solarEstimated', 'solarMeasured', 'houseEstimated', 'houseMeasured', 'carEstimated', 'carMeasured', 'batteryEstimated', 'batteryMeasured']);
+  assert.deepEqual(historyGroups.map((group: any) => [group.id, group.label]), [['solar', 'Solaire'], ['house', 'Maison'], ['battery', 'Batterie'], ['car', 'Voiture']]);
+  assert.deepEqual(allHistorySelection, ['solarEstimated', 'solarMeasured', 'houseEstimated', 'houseMeasured', 'batteryEstimated', 'batteryMeasured', 'carEstimated', 'carMeasured']);
   assert.deepEqual(defaultHistorySelection, allHistorySelection);
   const day = fixture(), original = structuredClone(day);
   const table = historyTable(day, allHistorySelection);

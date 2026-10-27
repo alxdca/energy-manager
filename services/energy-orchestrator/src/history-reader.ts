@@ -23,7 +23,7 @@ export interface HistoryDay {
   dailyEnergy: DailyEnergySummary;
   measurements: HourlyEnergySummary;
   observations: { method: 'counter_differences'; solar: ObservationPoint[]; household: ObservationPoint[];
-    car?: ObservationPoint[]; totalHousehold?: ObservationPoint[] };
+    car?: ObservationPoint[] };
   battery: BatteryHistorySummary;
   historicalEstimated: BatteryEstimateSummary;
   solarEstimates: Array<{ start: string; end: string; estimatedProductionKwh: number }>;

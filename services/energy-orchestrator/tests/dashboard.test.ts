@@ -1708,7 +1708,7 @@ const dailyEnergy = (overrides: Record<string, unknown> = {}) => ({
   date: '2026-10-24', timeZone: 'Europe/Zurich', dayHours: 24, expectedSeconds: 86400,
   status: 'partial', solar: dailyMetric(4.23, 2), household: dailyMetric(7.89, 1),
   firstObservationAt: null, lastObservationAt: null, method: 'recorded_energy',
-  solarSource: 'GEN24 PV (DC)', householdSource: 'GEN24 household (AC)', householdIncludesCar: true,
+  solarSource: 'GEN24 PV (DC)', householdSource: 'GEN24 household (AC)', householdIncludesCar: false,
   storageStatus: 'ready', error: null, ...overrides,
 });
 const dailySnapshot = (summary: unknown = dailyEnergy(), overrides: Record<string, unknown> = {}) => snapshot({
@@ -1771,12 +1771,11 @@ test('daily readings distinguish missing data and measured zero without claiming
 
 test('house-only daily readings show separate charging and clear it when readings become unavailable', async () => {
   const b = browser('accueil');
-  await b.complete(dailySnapshot(dailyEnergy({ householdIncludesCar: false, car: dailyMetric(2, 1), separationIncomplete: true })));
+  await b.complete(dailySnapshot(dailyEnergy({ householdIncludesCar: false, car: dailyMetric(2, 1) })));
   assert.equal(b.get('today-daily-household').textContent, '7,9');
   assert.equal(b.get('today-daily-car').textContent, '2');
   assert.equal(b.get('today-daily-car-reading').hidden, false);
   assert.match(b.get('today-daily-energy-source').textContent, /Maison hors recharge voiture/);
-  assert.match(b.get('today-daily-energy-source').textContent, /relevé partiel/);
   b.fireTimer(10000);
   await b.complete(dailySnapshot(dailyEnergy({ householdIncludesCar: false, car: dailyMetric(0, 1) })));
   assert.equal(b.get('today-daily-car').textContent, '0');
@@ -1806,7 +1805,7 @@ test('missing, malformed and wrong-date daily summaries hide and clear recorded 
     dailyEnergy({ household: dailyMetric(7, 0) }), dailyEnergy({ household: dailyMetric(null, 100) }),
     dailyEnergy({ household: { energyKwh: '7.8', coverageSeconds: 100 } }),
     dailyEnergy({ household: { energyKwh: 1, coverageSeconds: null } }), dailyEnergy({ solar: { ...dailyMetric(1, 1), coverageSeconds: 90000 } }),
-    dailyEnergy({ method: 'weather_estimate' }), dailyEnergy({ householdIncludesCar: null })]) {
+    dailyEnergy({ method: 'weather_estimate' }), dailyEnergy({ householdIncludesCar: null }), dailyEnergy({ householdIncludesCar: true })]) {
     await b.complete(dailySnapshot());
     assert.equal(b.get('today-daily-energy').hidden, false);
     b.fireTimer(10000);

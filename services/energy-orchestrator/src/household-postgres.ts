@@ -19,7 +19,7 @@ export interface HouseholdPublication { calculatedAt: string; forecasts: Forecas
 export function householdForecastFromEstimates(publication: HouseholdPublication | null, date: string, points: EnergyEstimatePoint[]): HouseholdForecast | null {
   const context = publication?.forecasts.find(forecast => forecast.date === date);
   if (!context || context.modelVersion !== householdModelVersion || context.scope !== 'household_excluding_car') return null;
-  const values = new Map(points.filter(point => point.excludesCar === true).map(point => [point.start, point.estimatedConsumptionKwh]));
+  const values = new Map(points.map(point => [point.start, point.estimatedConsumptionKwh]));
   const slots = context.slots.map(slot => ({ ...slot, estimatedConsumptionKwh: values.get(slot.start) ?? null }));
   const sum = (items: typeof slots) => items.some(slot => slot.estimatedConsumptionKwh === null) ? null
     : items.reduce((total, slot) => total + slot.estimatedConsumptionKwh!, 0);
@@ -50,7 +50,7 @@ export function createHouseholdArchive(options: {
       if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start
         || end.getTime() - start.getTime() > 86 * 86_400_000) throw new Error('Invalid training window.');
       const result = await pool.query<{ at: Date; value: number }>(`
-        SELECT observed_at AS at, value FROM energy_history.house_only_observations
+        SELECT observed_at AS at, value FROM energy_history.house_observations
         WHERE observed_at >= $1 AND observed_at < $2
           AND date_bin('15 minutes', observed_at, '1970-01-01T00:00:00Z'::timestamptz)
             + interval '15 minutes' <= $3
@@ -111,8 +111,8 @@ export function createHouseholdArchive(options: {
         });
         await client.query('DELETE FROM energy_history.house_forecasts WHERE interval_start > $1', [activeStart]);
         const points = forecasts.flatMap(forecast => forecast.slots).filter(slot => Date.parse(slot.end) > cutoff && slot.estimatedConsumptionKwh !== null);
-        if (points.length) await client.query(`INSERT INTO energy_history.house_forecasts (interval_start, energy_kwh, excludes_car)
-          SELECT x.start::timestamptz, x."estimatedConsumptionKwh", true FROM jsonb_to_recordset($1::jsonb)
+        if (points.length) await client.query(`INSERT INTO energy_history.house_forecasts (interval_start, energy_kwh)
+          SELECT x.start::timestamptz, x."estimatedConsumptionKwh" FROM jsonb_to_recordset($1::jsonb)
             AS x(start text, "estimatedConsumptionKwh" double precision) ON CONFLICT (interval_start) DO NOTHING`, [JSON.stringify(points)]);
         await client.query(`INSERT INTO energy_history.metadata (key, value) VALUES ($1, $2::jsonb)
           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [householdForecastKey,
@@ -121,9 +121,9 @@ export function createHouseholdArchive(options: {
     },
     async readForecast(date) {
       const slots = householdDaySlots(date);
-      const result = await pool.query<{ publication: HouseholdPublication | null; points: Array<{ start: string; estimatedConsumptionKwh: number; excludesCar: boolean }> }>(`
+      const result = await pool.query<{ publication: HouseholdPublication | null; points: Array<{ start: string; estimatedConsumptionKwh: number }> }>(`
         SELECT (SELECT value FROM energy_history.metadata WHERE key = $1) AS publication,
-          COALESCE((SELECT json_agg(json_build_object('start', interval_start, 'estimatedConsumptionKwh', energy_kwh, 'excludesCar', excludes_car) ORDER BY interval_start)
+          COALESCE((SELECT json_agg(json_build_object('start', interval_start, 'estimatedConsumptionKwh', energy_kwh) ORDER BY interval_start)
             FROM energy_history.house_forecasts WHERE interval_start >= $2 AND interval_start < $3), '[]'::json) AS points`,
       [householdForecastKey, slots[0].start, slots.at(-1)!.end]);
       const row = result.rows[0];

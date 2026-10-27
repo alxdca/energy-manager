@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCarEnergySampler, carEnergyCounter } from '../src/car-energy.js';
-import { summarizeSeparatedEnergy } from '../src/recorded-energy.js';
+import { summarizeRecordedEnergy } from '../src/recorded-energy.js';
 import type { ObservationSample } from '../src/observation-types.js';
 import { predictHousehold, trainHouseholdModel } from '../src/household-model.js';
 import type { WattpilotTelemetry } from '../src/wattpilot.js';
@@ -42,7 +42,7 @@ test('measured zero charging is distinct from a missing charger reading', () => 
 });
 
 test('misaligned snapshots, resets, changed meters, and negative net consumption cannot create house energy', () => {
-  const misaligned = sample(1770, 13000, 7000); misaligned.car!.at = at(1764).toISOString();
+  const misaligned = sample(1770, 13000, 7000); misaligned.car!.at = at(1739).toISOString();
   const replacement = sample(1770, 13000, 7000); replacement.car!.source = 'Wattpilot:replacement';
   const nativeReset = sample(1770, 13000, 7000); nativeReset.household!.components = { grid: 100 };
   const first = sample(870); first.household!.components = { grid: 200 };
@@ -50,8 +50,19 @@ test('misaligned snapshots, resets, changed meters, and negative net consumption
     assert.deepEqual(pair(sample(870), next).pending().household, []);
   }
   assert.deepEqual(pair(first, nativeReset).pending().household, []);
-  const aligned = sample(1770, 13000, 7000); aligned.car!.at = at(1765).toISOString();
+  const aligned = sample(1770, 13000, 7000); aligned.car!.at = at(1740).toISOString();
   assert.equal(pair(sample(870), aligned).pending().household[0].value, 1000);
+});
+
+test('fresh independent meter clocks can differ by twenty seconds without starving house-only history', () => {
+  const sampler = createCarEnergySampler();
+  for (let i = 0; i < 5; i++) {
+    const seconds = 870 + i * 900, value = sample(seconds, 10000 + i * 1000, 5000 + i * 500);
+    value.car!.at = at(seconds - 20).toISOString();
+    sampler.record(value, at(seconds)); sampler.finalize(at(seconds + 30));
+  }
+  assert.equal(sampler.pending().solar.length, 4);
+  assert.deepEqual(sampler.pending().household.map(point => point.value), [500, 500, 500, 500]);
 });
 
 test('restart retains paired baselines; a missing quarter requires rebaselining', () => {
@@ -72,17 +83,17 @@ test('charger energy remains recorded when household counters are unavailable', 
   assert.deepEqual(result.solar, [{ at: at(1770).toISOString(), value: 2000 }]);
 });
 
-test('separated daily totals report partial data and retain independent car and original totals', () => {
+test('daily totals keep house and car energy separate and preserve missing readings', () => {
   const points = { solar: [], household: [{ at: at(1770).toISOString(), value: 1000 }],
-    car: [{ at: at(1770).toISOString(), value: 2000 }],
-    totalHousehold: [{ at: at(1770).toISOString(), value: 3000 }, { at: at(2670).toISOString(), value: 500 }] };
-  const summary = summarizeSeparatedEnergy('2026-10-27', points, at(2700));
+    car: [{ at: at(1770).toISOString(), value: 2000 }] };
+  const summary = summarizeRecordedEnergy('2026-10-27', points, at(2700));
   assert.equal(summary.dailyEnergy.householdIncludesCar, false);
   assert.equal(summary.dailyEnergy.household.energyKwh, 1); assert.equal(summary.dailyEnergy.car?.energyKwh, 2);
-  assert.equal(summary.dailyEnergy.totalHousehold?.energyKwh, 3.5); assert.equal(summary.dailyEnergy.separationIncomplete, true);
-  const missing = summarizeSeparatedEnergy('2026-10-27', { ...points, household: [], car: [] }, at(2700));
-  assert.equal(missing.dailyEnergy.household.energyKwh, null); assert.equal(missing.dailyEnergy.car?.energyKwh, null);
-  assert.equal(missing.dailyEnergy.totalHousehold?.energyKwh, 3.5);
+  assert.equal('totalHousehold' in summary.dailyEnergy, false);
+  const missing = summarizeRecordedEnergy('2026-10-27', { ...points, household: [] }, at(2700));
+  assert.equal(missing.dailyEnergy.household.energyKwh, null); assert.equal(missing.dailyEnergy.car?.energyKwh, 2);
+  assert.equal(missing.dailyEnergy.status, 'partial');
+  assert.equal(missing.dailyEnergy.firstObservationAt, at(1770).toISOString());
 });
 
 test('only an identified, online charging meter can supply the energy counter', () => {

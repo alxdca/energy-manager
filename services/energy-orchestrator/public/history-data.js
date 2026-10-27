@@ -11,8 +11,8 @@ const instant = value => typeof value === 'string' ? Date.parse(value) : NaN;
 export const historyGroups = [
   { id: 'solar', label: 'Solaire', columns: [{ key: 'solarEstimated', label: 'Prévu', unit: 'Wh' }, { key: 'solarMeasured', label: 'Mesuré', unit: 'Wh' }] },
   { id: 'house', label: 'Maison', columns: [{ key: 'houseEstimated', label: 'Prévu', unit: 'Wh' }, { key: 'houseMeasured', label: 'Mesuré', unit: 'Wh' }] },
-  { id: 'car', label: 'Voiture', columns: [{ key: 'carEstimated', label: 'Prévu', unit: 'Wh' }, { key: 'carMeasured', label: 'Mesuré', unit: 'Wh' }] },
   { id: 'battery', label: 'Batterie', columns: [{ key: 'batteryEstimated', label: 'Prévu', unit: '%' }, { key: 'batteryMeasured', label: 'Mesuré', unit: '%' }] },
+  { id: 'car', label: 'Voiture', columns: [{ key: 'carEstimated', label: 'Prévu', unit: 'Wh' }, { key: 'carMeasured', label: 'Mesuré', unit: 'Wh' }] },
 ];
 export const allHistorySelection = historyGroups.flatMap(group => group.columns.map(column => column.key));
 export const defaultHistorySelection = [...allHistorySelection];
@@ -63,8 +63,7 @@ function householdSourceNote(day, start, end) {
   const points = (day?.householdPredictions ?? []).filter(p => instant(p.start) >= start && instant(p.end) <= end && finiteEnergy(p.estimatedConsumptionKwh));
   const average = points.filter(p => p.source === 'recent_average').length;
   const baseline = points.filter(p => p.source === 'configured_baseline').length;
-  const scope = points.some(p => p.excludesCar === false) ? 'Ancienne prévision : recharge voiture non séparée.'
-    : points.some(p => p.excludesCar === true) ? 'Maison prévue hors recharge voiture.' : '';
+  const scope = points.length ? 'Maison prévue hors recharge voiture.' : '';
   return [average ? `Secours : moyenne récente (${average} tranches).` : '', baseline ? `Secours : base configurée (${baseline} tranches).` : '', scope].filter(Boolean).join(' ');
 }
 function batteryObservations(day) {
@@ -138,7 +137,7 @@ function dayTable(day, selection, aggregation = 'quarter') {
       batteryMeasured: observed?.value ?? null, batteryEstimated: predicted ?? null,
       solarMeasured: pv.value, solarEstimated: solarEstimate.value };
     const notes = {
-      houseMeasured: `${measuredNote(house)} ${day?.dailyEnergy?.householdIncludesCar === false ? 'Maison hors recharge voiture.' : 'Recharge voiture incluse.'}`,
+      houseMeasured: `${measuredNote(house)} Maison hors recharge voiture.`,
       carMeasured: measuredNote(car),
       carEstimated: `${estimatedNote(carEstimate)} Recharge automatique programmée ; le mode manuel et le mode éco sans allocation restent inconnus.`,
       solarMeasured: measuredNote(pv),

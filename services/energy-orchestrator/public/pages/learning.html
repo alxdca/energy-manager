@@ -6,7 +6,7 @@
     <p class="planner-decision" id="household-training-status" role="status" aria-live="polite">Lecture du dernier apprentissage…</p>
     <dl class="planner-metrics">
       <div><dt>Dernier apprentissage</dt><dd id="learning-last">—</dd></div>
-      <div><dt>Prochain cycle quotidien</dt><dd id="learning-next">—</dd></div>
+      <div><dt>Prochain apprentissage</dt><dd id="learning-next">—</dd></div>
       <div><dt>Version du modèle</dt><dd id="learning-version">—</dd></div>
     </dl>
     <button class="control-apply" type="button" id="household-train" disabled><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg>Relancer l’apprentissage complet</button>
@@ -26,7 +26,7 @@
       <div><dt>Puissance de secours configurée</dt><dd id="learning-fallback-power">—</dd></div>
     </dl>
     <p class="learning-note" id="learning-weekday-rule"></p>
-    <p class="learning-note">Les prévisions sont actualisées toutes les 15 minutes. Le cycle quotidien s’exécute au premier bilan après minuit, heure de Zurich. Les mesures finalisées du jour contribuent aux créneaux déjà observés.</p>
+    <p class="learning-note">Les prévisions sont actualisées toutes les 15 minutes. Le cycle quotidien s’exécute au premier bilan après minuit, heure de Zurich. Un modèle sans observations réessaie automatiquement aux bilans suivants. Les mesures finalisées du jour contribuent aux créneaux déjà observés.</p>
   </section>
 
   <section class="panel planner-panel" aria-labelledby="learning-data-heading">

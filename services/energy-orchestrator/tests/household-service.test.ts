@@ -46,6 +46,23 @@ test('quarter-hour updates reuse trained profiles; a new Zurich day trains once'
   assert.equal(f.models.length, 2); assert.notEqual(f.service.status().modelId, id);
 });
 
+test('an initially empty model retries on the next eligible batch and learns when observations arrive', async () => {
+  const f = fixture(); f.observations.length = 0;
+  await f.service.refresh();
+  assert.equal(f.models[0].training.observations, 0);
+  assert.equal(f.service.status().nextTrainingAt, '2026-10-27T11:15:00.000Z');
+  assert.equal(f.forecasts.get('2026-10-28')!.source, 'configured_baseline');
+  f.setTime('2026-10-27T11:05:00Z'); await f.service.refresh();
+  assert.equal(f.models.length, 1, 'empty-model retries respect the existing fifteen-minute backoff');
+  f.observations.push({ at: '2026-10-27T11:14:30Z', value: 500 });
+  f.setTime('2026-10-27T11:15:00Z'); await f.service.refresh();
+  assert.equal(f.models.length, 2); assert.equal(f.models[1].training.observations, 1);
+  const slot = f.forecasts.get('2026-10-28')!.slots.find(slot => slot.start === '2026-10-28T11:00:00.000Z')!;
+  assert.equal(slot.source, 'learned_profile'); assert.equal(slot.estimatedConsumptionKwh, .5);
+  f.setTime('2026-10-27T11:30:00Z'); await f.service.refresh();
+  assert.equal(f.models.length, 2, 'populated models retain the daily training cadence');
+});
+
 test('manual learning incorporates today’s available household readings into the saved forecasts', async () => {
   const f = fixture(); await f.service.refresh();
   f.observations.push({ at: '2026-10-27T07:14:30Z', value: 1000 },

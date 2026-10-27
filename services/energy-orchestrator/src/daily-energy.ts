@@ -21,10 +21,8 @@ export interface DailyEnergySummary {
   method: 'power_integration' | 'recorded_energy';
   solarSource: 'GEN24 P_PV (DC)' | 'GEN24 PV (DC)';
   householdSource: 'GEN24 -P_Load' | 'GEN24 household (AC)';
-  householdIncludesCar: boolean;
+  householdIncludesCar: false;
   car?: DailyEnergyMetric;
-  totalHousehold?: DailyEnergyMetric;
-  separationIncomplete?: boolean;
   storageStatus: 'ready' | 'error';
   error: string | null;
 }
@@ -35,10 +33,8 @@ export interface HourlyEnergySummary {
   method: 'power_integration' | 'recorded_energy';
   solarSource: 'GEN24 P_PV (DC)' | 'GEN24 PV (DC)';
   householdSource: 'GEN24 -P_Load' | 'GEN24 household (AC)';
-  householdIncludesCar: boolean;
+  householdIncludesCar: false;
   car?: DailyEnergyMetric;
-  totalHousehold?: DailyEnergyMetric;
-  separationIncomplete?: boolean;
   storageStatus: 'ready' | 'error';
   error: string | null;
   quarterHours?: HourlyEnergySummary['hours'];
@@ -49,7 +45,6 @@ export interface HourlyEnergySummary {
     solar: DailyEnergyMetric;
     household: DailyEnergyMetric;
     car?: DailyEnergyMetric;
-    totalHousehold?: DailyEnergyMetric;
   }>;
 }
 export function observationTimestamp(value: unknown): string | null {

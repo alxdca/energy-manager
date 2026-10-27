@@ -575,6 +575,39 @@ function committedForecast(source: ReturnType<typeof futureSource>, at: Date) {
       estimatedConsumptionKwh: consumptionKwh, baselineKwh: consumptionKwh } };
 }
 
+test('Today displays database day sums independently of time, missing quarters and household fallback', async () => {
+  for (const minute of ['00', '15', '30', '45']) {
+    const at = `2026-10-24T12:${minute}:30Z`;
+    const b = browser({ both: true, now: at });
+    const value = { ...committedForecast(futureSource(), new Date(at)),
+      hourly: null, quarterHourly: null, householdForecast: null,
+      dailyTotals: { date: '2026-10-24', productionKwh: 42.3, consumptionKwh: 31 } };
+    await b.complete(value, 0);
+    assert.equal(b.get('today-forecast-energy').textContent, `≈ ${decimal(42.3)}`);
+    assert.equal(b.get('today-forecast-consumption').textContent, `≈ ${integer(31)}`);
+    assert.equal(b.get('today-solar-forecast').dataset.state, 'online');
+    assert.equal(b.get('forecast-energy').textContent, '', 'Today does not write tomorrow’s totals');
+  }
+});
+
+test('stored daily sums survive weather outages and distinguish zero, empty and invalid channels', async () => {
+  const b = browser({ both: true });
+  for (const [productionKwh, consumptionKwh, production, consumption] of [
+    [4.2, 7, `≈ ${decimal(4.2)}`, '≈ 7'], [0, 0, '≈ 0', '≈ 0'],
+    [null, 7, '—', '≈ 7'], [4.2, null, `≈ ${decimal(4.2)}`, '—'],
+    [-1, '7', '—', '—'], [null, null, '—', '—'],
+  ]) {
+    await b.complete(forecast({ status: 'offline', date: '2026-10-24',
+      dailyTotals: { date: '2026-10-24', productionKwh, consumptionKwh } }), b.requests.map(request => request.url).lastIndexOf('/api/forecast/today'));
+    assert.equal(b.get('today-forecast-energy').textContent, production);
+    assert.equal(b.get('today-forecast-consumption').textContent, consumption);
+    b.fireTimer(10000);
+  }
+  await b.complete(forecast({ dailyTotals: { date: '2026-10-23', productionKwh: 9, consumptionKwh: 8 } }), b.requests.length - 1);
+  assert.equal(b.get('today-forecast-energy').textContent, '—');
+  assert.equal(b.get('today-forecast-consumption').textContent, '—');
+});
+
 test('the same committed forecast keeps its displayed energy when browser time advances', async () => {
   const at = '2026-10-24T12:22:30Z';
   const b = browser({ now: at });
