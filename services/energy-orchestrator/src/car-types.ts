@@ -28,10 +28,12 @@ export interface CarAutomationState {
   readonly revision: number;
   readonly targetOverride: CarTargetOverride | null;
   readonly lastCheckpoint: CarCheckpoint | null;
+  readonly completedTarget: CarTargetOverride | null;
   setManualOverride(value: boolean): Promise<void>;
   setSession(epoch: string | null, revision: number): Promise<void>;
   setTargetOverride(value: CarTargetOverride | null): Promise<void>;
   setCheckpoint(value: CarCheckpoint): Promise<void>;
+  setCompletedTarget(value: CarTargetOverride | null): Promise<void>;
 }
 export interface CarBatteryContext {
   available: boolean;
@@ -104,6 +106,8 @@ export interface CarPlanInput {
   battery: CarBatteryContext;
   forecasts: EnergyForecast[];
   override?: CarTargetOverride | null;
+  /** Target already reached in this period; cleared once a full recharge is needed. */
+  completedTarget?: CarTargetOverride | null;
 }
 export interface CarBatteryConstraint {
   active: boolean;

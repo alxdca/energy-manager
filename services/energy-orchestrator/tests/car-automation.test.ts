@@ -29,6 +29,7 @@ function fixture(options: {
   let revision = 0;
   let lastCheckpoint: CarCheckpoint | null = null;
   let targetOverride: CarTargetOverride | null = null;
+  let completedTarget: CarTargetOverride | null = null;
   let stateError: string | null = options.stateError ?? null;
   let soc = 40;
   let carStatus: CarTelemetry['status'] = 'online';
@@ -48,10 +49,12 @@ function fixture(options: {
     owner: 'owner-one', get manualOverride() { return manualOverride; }, get epoch() { return epoch; },
     get revision() { return revision; }, get error() { return stateError; },
     get targetOverride() { return targetOverride; }, get lastCheckpoint() { return lastCheckpoint; },
+    get completedTarget() { return completedTarget; },
     async setManualOverride(value) { manualOverride = value; events.push({ kind: 'persist-manual', request: value }); },
     async setSession(value, next) { epoch = value; revision = next; events.push({ kind: 'persist-session', request: next }); },
     async setTargetOverride(value) { targetOverride = value; },
     async setCheckpoint(value) { lastCheckpoint = value; },
+    async setCompletedTarget(value) { completedTarget = value; },
   };
   let device: WattpilotTelemetry = {
     status: 'online', configured: true, connected: true, ready: true, stale: false,
@@ -241,6 +244,82 @@ test('the night window switches an owned Eco session to Normal at 23:05 without 
   const stop = f.events.findIndex(event => event.kind === 'stop');
   const normal = f.events.findIndex(event => event.kind === 'activate' && event.request.mode === 'normal');
   assert.ok(stop >= 0 && stop < normal, 'the Eco lease must stop before Normal replaces it');
+});
+
+test('every completed target waits for a five point drop then recharges fully before latching again', async t => {
+  for (const targetSoc of [50, 60, 70, 80]) {
+    const f = fixture(); t.after(() => f.runner.stop());
+    f.jump(Date.parse('2026-10-26T22:10:00.000Z') - origin);
+    if (targetSoc !== 50) await f.runner.setTargetOverride({
+      deadline: '2026-10-27T05:55:00.000Z', targetSocPercent: targetSoc,
+    });
+    f.soc(targetSoc - 1); await f.enable();
+    assert.equal(f.runner.status().status, 'charging', 'initial charging has no dead band');
+    f.soc(targetSoc); await f.advance(5000);
+    assert.equal(f.runner.status().reason, 'eco_target_reached');
+    assert.equal(f.state.completedTarget?.targetSocPercent, targetSoc);
+    for (const drop of [1, 4, 4.9]) {
+      f.soc(targetSoc - drop); await f.advance(5000);
+      assert.equal(f.runner.status().reason, 'eco_target_hysteresis');
+      assert.equal(f.count('activate').filter(event => event.request.mode === 'normal').length, 1);
+    }
+    f.soc(targetSoc - 5); await f.advance(5000);
+    assert.equal(f.runner.status().status, 'charging');
+    assert.equal(f.state.completedTarget, null);
+    for (const drop of [4, 1]) {
+      f.soc(targetSoc - drop); await f.advance(5000);
+      assert.equal(f.runner.status().status, 'charging');
+    }
+    f.soc(targetSoc); await f.advance(5000);
+    f.soc(targetSoc - 1); await f.advance(5000);
+    assert.equal(f.runner.status().reason, 'eco_target_hysteresis');
+    assert.equal(f.count('activate').filter(event => event.request.mode === 'normal').length, 2);
+  }
+});
+
+test('a night completion survives midnight and stale SOC without permitting a top-up', async t => {
+  const f = fixture({ wake: async () => ({ ...f.car(), status: 'asleep' }) });
+  t.after(() => f.runner.stop());
+  f.soc(60); await f.enable();
+  f.jump(2 * 3_600_000);
+  f.soc(59); await f.runner.evaluate();
+  assert.equal(f.runner.status().reason, 'eco_target_hysteresis');
+  f.soc(50); f.stale(); await f.runner.evaluate();
+  assert.equal(f.state.completedTarget?.targetSocPercent, 60);
+  f.online(); f.soc(59); await f.runner.evaluate();
+  assert.equal(f.runner.status().reason, 'eco_target_hysteresis');
+  assert.equal(f.count('activate').some(event => event.request.mode === 'normal'), false);
+});
+
+test('a new night and a higher explicit target can charge a small initial shortfall', async t => {
+  const f = fixture(); t.after(() => f.runner.stop());
+  f.soc(60); await f.enable();
+  await f.runner.setTargetOverride({ deadline: '2026-10-26T05:55:00.000Z', targetSocPercent: 62 });
+  await f.settle(); await f.runner.evaluate();
+  assert.equal(f.runner.status().status, 'charging');
+  assert.equal(f.state.completedTarget, null);
+  f.soc(62); await f.runner.evaluate();
+  f.jump(24 * 3_600_000);
+  f.soc(49); await f.runner.evaluate();
+  assert.equal(f.runner.status().status, 'charging');
+  assert.equal(f.runner.status().plan?.target.minimumSocPercent, 50);
+});
+
+test('the afternoon has its own completion latch and restarts at 25 percent', async t => {
+  const f = fixture(); t.after(() => f.runner.stop());
+  f.soc(60); await f.enable();
+  f.jump(Date.parse('2026-10-26T11:05:00.000Z') - origin);
+  f.soc(29); await f.runner.evaluate();
+  assert.equal(f.runner.status().status, 'charging');
+  f.soc(30); await f.runner.evaluate();
+  f.soc(29); await f.runner.evaluate();
+  assert.equal(f.runner.status().reason, 'eco_target_hysteresis');
+  f.soc(25); await f.runner.evaluate();
+  assert.equal(f.runner.status().status, 'charging');
+  f.soc(29); await f.runner.evaluate();
+  assert.equal(f.runner.status().status, 'charging');
+  f.soc(30); await f.runner.evaluate();
+  assert.equal(f.runner.status().reason, 'eco_target_reached');
 });
 
 test('the final cutoff lease is not renewed when its deadline cannot be extended', async t => {

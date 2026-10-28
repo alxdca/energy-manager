@@ -343,6 +343,7 @@
     ['eco_default', 'Mode éco selon les réglages de la borne'],
     ['eco_soc_unavailable', 'Mode éco · niveau de charge Tesla à actualiser'],
     ['eco_car_unplugged', 'Mode éco · voiture débranchée'], ['eco_target_reached', 'Minimum atteint · mode éco'],
+    ['eco_target_hysteresis', 'Minimum déjà atteint · reprise après une baisse de 5 points · mode éco'],
     ['eco_connection_unknown', 'Mode éco · branchement inconnu'],
     ['eco_tesla_disconnected', 'Mode éco · branchement Tesla à vérifier'], ['eco_deadline_passed', 'Échéance passée · mode éco'],
     ['night_minimum', 'Recharge du minimum du matin'],

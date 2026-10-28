@@ -85,6 +85,40 @@ test('afternoon restores only30 percent, ignores the next morning minimum, then 
   assert.equal(planCarCharge(f).target.minimumSocPercent, 30);
 });
 
+test('completed targets suppress forced top-ups until a five percentage point drop in the same period', () => {
+  for (const [at, overrideSoc] of [
+    ['2026-10-27T01:00:00+01:00', null], // Weekly 50% target.
+    ['2026-10-26T01:00:00+01:00', null], // Weekly 60% target.
+    ['2026-10-27T12:30:00+01:00', null], // Afternoon 30% target.
+    ...[70, 80, 90, 100].map(soc => ['2026-10-27T01:00:00+01:00', soc] as const),
+  ] as const) {
+    const f = input(at);
+    if (overrideSoc !== null) {
+      f.override = { deadline: planCarCharge(f).target.deadline, targetSocPercent: overrideSoc };
+      f.car.chargeLimitPercent = 100;
+    }
+    const target = planCarCharge(f).target;
+    if (overrideSoc !== null) assert.equal(target.minimumSocPercent, overrideSoc);
+    f.completedTarget = { deadline: target.deadline, targetSocPercent: target.minimumSocPercent };
+    for (const drop of [1, 4, 4.9]) {
+      f.car.socPercent = target.minimumSocPercent - drop;
+      const plan = planCarCharge(f);
+      assert.equal(plan.action, 'eco');
+      assert.equal(plan.reason, 'eco_target_hysteresis');
+      assert.equal(plan.slots.length, 0);
+    }
+    for (const drop of [5, 6]) {
+      f.car.socPercent = target.minimumSocPercent - drop;
+      assert.equal(planCarCharge(f).action, 'charge');
+    }
+    f.car.socPercent = target.minimumSocPercent - 1;
+    f.completedTarget = { ...f.completedTarget, deadline: new Date(Date.parse(target.deadline) - 86_400_000).toISOString() };
+    assert.equal(planCarCharge(f).action, 'charge', 'an earlier period cannot suppress charging');
+    f.completedTarget = { deadline: target.deadline, targetSocPercent: target.minimumSocPercent - 1 };
+    assert.equal(planCarCharge(f).action, 'charge', 'a changed target starts normally');
+  }
+});
+
 test('Eco requires no Tesla SOC, forecast, or plugged car, and never claims unknown success', () => {
   for (const at of ['2026-10-25T10:00:00+01:00', '2026-10-25T12:30:00+01:00', '2026-10-26T01:00:00+01:00']) {
     const f = input(at); f.car.status = 'asleep'; f.car.socPercent = null; f.car.observedAt = null;

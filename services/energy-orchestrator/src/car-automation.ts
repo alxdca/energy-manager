@@ -1,4 +1,4 @@
-import { getCarForceWindow, planCarCharge, validateCarTargetOverride } from './car-plan.js';
+import { carRestartDropPercent, getCarForceWindow, planCarCharge, validateCarTargetOverride } from './car-plan.js';
 import { getCarTarget, getLocalDate, getNightTariffEnd, getSchedule } from './policy.js';
 import type { CarTelemetry } from './tesla.js';
 import type { Telemetry } from './status.js';
@@ -145,6 +145,26 @@ export function createCarAutomation(options: CarAutomationOptions) {
     return telemetry.status === 'online' && finite(at) && at <= now().getTime() + 5000 && now().getTime() - at <= 10_000
       && [telemetry.householdKw, telemetry.gridImportKw, telemetry.gridExportKw, telemetry.batteryChargeKw, telemetry.batteryDischargeKw]
         .every(value => finite(value) && value >= 0);
+  }
+  async function makePlan(input: CarPlanInput): Promise<CarPlan> {
+    const completed = options.state.completedTarget;
+    const plan = planner({ ...input, completedTarget: completed });
+    const sameTarget = completed?.deadline === plan.target.deadline
+      && completed.targetSocPercent === plan.target.minimumSocPercent;
+    const window = getCarForceWindow(input.now);
+    const inPeriod = window === 'night' && plan.target.kind !== 'afternoon'
+      || window === 'afternoon' && plan.target.kind === 'afternoon';
+    if (inPeriod && input.charger.carConnected === true && freshCar(input.car) && plan.socPercent !== null
+      && input.now.getTime() < Date.parse(plan.target.gridChargingEndsAt)) {
+      if (plan.socPercent >= plan.target.minimumSocPercent) {
+        if (!sameTarget) await options.state.setCompletedTarget({ deadline: plan.target.deadline,
+          targetSocPercent: plan.target.minimumSocPercent });
+      } else if (completed && (!sameTarget || plan.socPercent <= plan.target.minimumSocPercent - carRestartDropPercent)) {
+        // Release the latch so a restarted charge continues all the way to target.
+        await options.state.setCompletedTarget(null);
+      }
+    } else if (completed && !sameTarget) await options.state.setCompletedTarget(null);
+    return plan;
   }
   async function checkpoint(car: CarTelemetry) {
     const target = checkpointTarget;
@@ -335,8 +355,9 @@ export function createCarAutomation(options: CarAutomationOptions) {
       if (!isCurrent()) return;
       await checkpoint(car);
       if (!isCurrent()) return;
-      let plan = planner({ now: now(), config: options.config, car, charger, telemetry, battery, forecasts,
+      let plan = await makePlan({ now: now(), config: options.config, car, charger, telemetry, battery, forecasts,
         override: options.state.targetOverride });
+      if (!isCurrent()) return;
       const rememberTarget = () => {
         if (!checkpointTarget || checkpointTarget.date !== plan.target.date
           || (checkpointTarget.kind ?? 'morning') !== (plan.target.kind ?? 'morning')) {
@@ -376,7 +397,7 @@ export function createCarAutomation(options: CarAutomationOptions) {
               }
               if (!safeSite(site)) { wakeBlockedReason = 'site_unavailable'; abort.abort(); return; }
               const eco = planner({ now: now(), config: options.config, car, charger: observed, telemetry: site,
-                battery: storage, forecasts, override: options.state.targetOverride });
+                battery: storage, forecasts, override: options.state.targetOverride, completedTarget: options.state.completedTarget });
               if (eco.action === 'eco') {
                 await applyPlan(eco, car, site, observed, abort, isCurrent);
                 wakeMaintenance = current.status === 'eco' && mayHaveControlled;
@@ -407,7 +428,7 @@ export function createCarAutomation(options: CarAutomationOptions) {
             await options.state.setManualOverride(true); await release(); update('manual', 'manual_override', null, null); return;
           }
           await checkpoint(car);
-          plan = planner({ now: now(), config: options.config, car, charger, telemetry, battery, forecasts,
+          plan = await makePlan({ now: now(), config: options.config, car, charger, telemetry, battery, forecasts,
             override: options.state.targetOverride });
           rememberTarget();
         } else if (wakeMaintenance) {

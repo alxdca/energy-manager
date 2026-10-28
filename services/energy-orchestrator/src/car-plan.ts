@@ -2,6 +2,8 @@ import { getCalendarDayBounds, getCarTarget, getLocalDate, getNightTariffEnd, ge
 import type { CarChargingSlot, CarPlan, CarPlanInput, CarTargetOverride, SolarBatterySupport } from './car-types.js';
 
 const hour = 3_600_000;
+// Subtracted from the active target SOC, regardless of its configured level.
+export const carRestartDropPercent = 5;
 const energyTolerance = 0.000004; // Less than one millisecond at nominal11.04kW.
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const nonnegative = (value: unknown): value is number => finite(value) && value >= 0;
@@ -156,6 +158,12 @@ export function planCarCharge(input: CarPlanInput): CarPlan {
   const window = getCarForceWindow(input.now);
   const forcing = window === 'night' && target.kind === 'morning' || window === 'afternoon' && target.kind === 'afternoon';
   if (!measured || !forcing || plan.requiredAcKwh! <= energyTolerance) return eco();
+  const completed = input.completedTarget;
+  if (completed?.deadline === target.deadline && completed.targetSocPercent === target.minimumSocPercent
+    && car.socPercent! > target.minimumSocPercent - carRestartDropPercent) {
+    plan.reason = 'eco_target_hysteresis';
+    return eco();
+  }
   if (invalidOverride) { plan.reason = 'target_override_invalid'; return eco(); }
   if (car.chargingState === 'Disconnected') { plan.reason = 'eco_tesla_disconnected'; return eco(); }
   if (!['Charging', 'Complete', 'Stopped', 'NoPower', 'Starting'].includes(car.chargingState ?? '')) { plan.reason = 'eco_soc_unavailable'; return eco(); }

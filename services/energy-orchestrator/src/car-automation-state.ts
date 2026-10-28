@@ -32,25 +32,30 @@ interface RecordState {
   revision: number;
   targetOverride: CarTargetOverride | null;
   lastCheckpoint: CarCheckpoint | null;
+  completedTarget: CarTargetOverride | null;
 }
 
 /** A missing file opts out; a corrupt file is preserved rather than inventing authority. */
 export async function createCarAutomationState(filePath: string): Promise<CarAutomationState> {
   let state: RecordState = { version: 1, owner: randomUUID(), manualOverride: true, epoch: null,
-    revision: 0, targetOverride: null, lastCheckpoint: null };
+    revision: 0, targetOverride: null, lastCheckpoint: null, completedTarget: null };
   let error: string | null = null;
   let corrupt = false;
   let missing = false;
   try {
     const value: unknown = JSON.parse(await readFile(filePath, 'utf8'));
-    if (!object(value) || Object.keys(value).length !== 7 || value.version !== 1
+    if (!object(value) || !Object.keys(value).every(key => ['version', 'owner', 'manualOverride', 'epoch', 'revision',
+      'targetOverride', 'lastCheckpoint', 'completedTarget'].includes(key))
+      || Object.keys(value).length !== (Object.hasOwn(value, 'completedTarget') ? 8 : 7) || value.version !== 1
       || typeof value.owner !== 'string' || !uuid.test(value.owner) || typeof value.manualOverride !== 'boolean'
       || !(value.epoch === null || typeof value.epoch === 'string' && identifier.test(value.epoch))
       || !Number.isSafeInteger(value.revision) || (value.revision as number) < 0
       || value.epoch === null && (!value.manualOverride || value.revision !== 0)
       || !(value.targetOverride === null || target(value.targetOverride))
-      || !(value.lastCheckpoint === null || checkpoint(value.lastCheckpoint))) throw new Error(storageError);
-    state = structuredClone(value) as unknown as RecordState;
+      || !(value.lastCheckpoint === null || checkpoint(value.lastCheckpoint))
+      || Object.hasOwn(value, 'completedTarget') && !(value.completedTarget === null || target(value.completedTarget))) throw new Error(storageError);
+    // Existing version-1 files predate completion tracking.
+    state = { ...structuredClone(value), completedTarget: value.completedTarget ?? null } as unknown as RecordState;
   } catch (failure) {
     if ((failure as NodeJS.ErrnoException).code === 'ENOENT') missing = true;
     else { corrupt = true; error = storageError; }
@@ -84,6 +89,7 @@ export async function createCarAutomationState(filePath: string): Promise<CarAut
     get epoch() { return state.epoch; }, get revision() { return state.revision; }, get error() { return error; },
     get targetOverride() { return structuredClone(state.targetOverride); },
     get lastCheckpoint() { return structuredClone(state.lastCheckpoint); },
+    get completedTarget() { return structuredClone(state.completedTarget); },
     setManualOverride(value) {
       if (typeof value !== 'boolean' || !value && state.epoch === null) return Promise.reject(new Error('Une session autorisée est nécessaire avant le mode auto.'));
       return update({ manualOverride: value });
@@ -101,6 +107,10 @@ export async function createCarAutomationState(filePath: string): Promise<CarAut
     setCheckpoint(value) {
       if (!checkpoint(value)) return Promise.reject(new Error('Bilan voiture invalide.'));
       return update({ lastCheckpoint: structuredClone(value) });
+    },
+    setCompletedTarget(value) {
+      if (value !== null && !target(value)) return Promise.reject(new Error('Objectif voiture atteint invalide.'));
+      return update({ completedTarget: structuredClone(value) });
     },
   };
 }

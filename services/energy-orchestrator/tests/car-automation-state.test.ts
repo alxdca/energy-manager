@@ -55,6 +55,50 @@ test('targets/checkpoints survive restart and getters do not expose mutable stat
     result: 'unknown', recordedAt: '2026-10-25T06:00:00.000Z', kind: 'morning' }), /Bilan/);
 });
 
+test('completed targets survive restart, remain private copies and can be cleared for a full recharge', async t => {
+  const path = await fixture(t);
+  const state = await createCarAutomationState(path);
+  const completed = { deadline: '2026-10-27T05:55:00.000Z', targetSocPercent: 50 };
+  await state.setCompletedTarget(completed);
+  completed.targetSocPercent = 10;
+  state.completedTarget!.targetSocPercent = 20;
+  const restored = await createCarAutomationState(path);
+  assert.equal(restored.completedTarget?.targetSocPercent, 50);
+  await assert.rejects(restored.setCompletedTarget({ ...completed, targetSocPercent: NaN }), /invalide/);
+  await restored.setCompletedTarget(null);
+  assert.equal((await createCarAutomationState(path)).completedTarget, null);
+});
+
+test('existing version-1 state loads without completion tracking and persists the new field', async t => {
+  const path = await fixture(t);
+  const state = await createCarAutomationState(path);
+  await state.setSession('epoch', 2);
+  await state.setManualOverride(false);
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  delete saved.completedTarget;
+  await writeFile(path, JSON.stringify(saved));
+  const restored = await createCarAutomationState(path);
+  assert.equal(restored.error, null);
+  assert.equal(restored.manualOverride, false);
+  assert.equal(restored.revision, 2);
+  assert.equal(restored.completedTarget, null);
+  await restored.setCompletedTarget({ deadline: '2026-10-27T05:55:00.000Z', targetSocPercent: 50 });
+  assert.equal((await createCarAutomationState(path)).completedTarget?.targetSocPercent, 50);
+});
+
+test('invalid persisted completion tracking blocks automatic state', async t => {
+  const path = await fixture(t);
+  await createCarAutomationState(path);
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  saved.completedTarget = { deadline: 'invalid', targetSocPercent: 50 };
+  const bytes = JSON.stringify(saved);
+  await writeFile(path, bytes);
+  const restored = await createCarAutomationState(path);
+  assert.ok(restored.error);
+  assert.equal(restored.manualOverride, true);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+});
+
 test('corrupt state is preserved and cannot invent automatic ownership', async t => {
   const path = await fixture(t);
   const corrupt = '{"version":99,"manualOverride":false}';

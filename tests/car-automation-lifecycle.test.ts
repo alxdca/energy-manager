@@ -75,7 +75,7 @@ async function fixture(t: TestContext, origin: string) {
     }) as never,
   });
   await controller.start();
-  const state = await createCarAutomationState(join(directory, 'car.json'));
+  let state = await createCarAutomationState(join(directory, 'car.json'));
   let car: CarTelemetry = { status: 'online', vehicleName: 'Model 3', socPercent: 45, chargeLimitPercent: 80,
     chargingState: 'Stopped', observedAt: now().toISOString(), error: null };
   let runner!: ReturnType<typeof createCarAutomation>;
@@ -103,7 +103,7 @@ async function fixture(t: TestContext, origin: string) {
         constraint.supply.authorizationExpiresAt);
       else await controls.automationController.hold(homeowner, expiresAt, () => true);
     } });
-  runner = createCarAutomation({ config: loadCarAutomationConfig({}), state, controller: controls.carAutomationController, now,
+  const makeRunner = () => createCarAutomation({ config: loadCarAutomationConfig({}), state, controller: controls.carAutomationController, now,
     readCar: async () => car,
     readTelemetry: async () => ({ status: 'online', observedAt: now().toISOString(), error: null,
       solarKw: 0, householdKw: .5 + (device.powerWatts ?? 0) / 1000,
@@ -112,11 +112,18 @@ async function fixture(t: TestContext, origin: string) {
     readBattery: async () => ({ available: true, automatic: true, requestedPowerKw: 0, socPercent: 80, goalSocPercent: 80, solarSupport }),
     readForecasts: async () => [], coordinate: coordinator.coordinate, releaseCoordination: coordinator.release,
   });
+  runner = makeRunner();
   runner.start();
   t.after(async () => { await runner.stop(); await controller.shutdown(); await rm(directory, { recursive: true, force: true }); });
   const post = (body: unknown) => controls.api.request('/car', { method: 'POST',
     headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  return { runner, state, controller, controls, writes, calls, post,
+  return { get runner() { return runner; }, get state() { return state; }, controller, controls, writes, calls, post,
+    async restart() {
+      await runner.stop();
+      state = await createCarAutomationState(join(directory, 'car.json'));
+      runner = makeRunner(); runner.start();
+      await runner.evaluate();
+    },
     failStops(count: number) { failedStops = count; },
     solar(value: SolarBatterySupport) { solarSupport = value; },
     soc(value: number) { car = { ...car, socPercent: value, observedAt: now().toISOString() }; },
@@ -146,6 +153,25 @@ test('real car facade and controller supervisor remain manual until Auto, then s
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(old),
   });
   assert.equal(response.status, 409, 'the completed revision cannot reactivate after stop');
+});
+
+test('a completed charge survives restart and only resumes after a five point drop', async t => {
+  const f = await fixture(t, '2026-10-27T01:00:00+01:00');
+  await f.post({ mode: 'auto' }); await f.runner.evaluate();
+  assert.equal(f.runner.status().status, 'charging');
+  f.soc(50); await f.runner.evaluate();
+  f.soc(49); await f.restart();
+  assert.equal(f.state.completedTarget?.targetSocPercent, 50);
+  assert.equal(f.runner.status().plan?.reason, 'eco_target_hysteresis');
+  assert.equal(f.writes.filter(command => command.mode === 'normal').length, 1);
+  f.soc(45); await f.runner.evaluate();
+  assert.equal(f.runner.status().status, 'charging');
+  assert.equal(f.state.completedTarget, null);
+  f.soc(49); await f.restart();
+  assert.equal(f.runner.status().status, 'charging', 'a resumed charge survives restart and continues to target');
+  f.soc(50); await f.runner.evaluate();
+  f.soc(49); await f.runner.evaluate();
+  assert.equal(f.runner.status().plan?.reason, 'eco_target_hysteresis');
 });
 
 test('night solar quota reaches the real supply API and exhausted quota returns to hold without replaying the car charge', async t => {
