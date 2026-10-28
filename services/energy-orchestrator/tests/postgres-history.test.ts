@@ -85,6 +85,52 @@ function savedModel(id = '00000000-0000-4000-8000-000000000003', trainedAt = at)
 }
 
 test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, async t => {
+  await t.test('existing version 11 databases add car SOC storage without changing older history', async t => {
+    const f = await database(t); let history = await f.open(); await history.close();
+    await f.admin.query('DROP TABLE energy_history.car_soc_observations');
+    await f.admin.query('INSERT INTO energy_history.battery_observations VALUES ($1,42)', [advance(-30)]);
+    history = await f.open();
+    assert.equal(await f.count('car_soc_observations'), 0);
+    assert.deepEqual((await history.historyReader.day(date)).battery.points, [{ at: advance(-30), socPercent: 42 }]);
+  });
+
+  await t.test('car SOC quarters persist original Tesla readings atomically and seed later days after restart', async t => {
+    const f = await database(t); let now = new Date(at); let history = await f.open(() => now);
+    now = new Date(advance(870)); history.record({ ...sample(870), carSoc: { at: advance(810), value: 40 } }, now);
+    now = new Date(advance(880)); history.record({ ...sample(880), carSoc: { at: advance(850), value: 0 } }, now);
+    await history.flush(); assert.equal(await f.count('car_soc_observations'), 0);
+    now = new Date(advance(900)); await history.flush();
+    assert.deepEqual((await history.historyReader.day(date)).carSoc?.points, [{ at: advance(850), socPercent: 0 }]);
+    await f.admin.query(`CREATE FUNCTION energy_history.reject_soc() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'test SOC persistence failure'; END $$;
+      CREATE TRIGGER reject_soc BEFORE INSERT ON energy_history.car_soc_observations
+      FOR EACH ROW EXECUTE FUNCTION energy_history.reject_soc()`);
+    now = new Date(advance(1770)); history.record({ ...sample(1770, 1200, 5200), carSoc: { at: advance(1710), value: 60 } }, now);
+    now = new Date(advance(1800)); await assert.rejects(history.flush());
+    assert.equal(await f.count('battery_observations'), 1, 'a failed SOC insert rolls back the other observation channels');
+    assert.equal(await f.count('car_soc_observations'), 1);
+    assert.equal((await history.historyReader.day(date)).carSoc?.points.length, 2, 'pending SOC survives failed persistence');
+    assert.equal((await history.carSocHistory.summary(date, new Date(advance(900)))).points.length, 1, 'historical reads exclude future readings');
+    await f.admin.query('DROP TRIGGER reject_soc ON energy_history.car_soc_observations');
+    await history.flush();
+    const day = await history.historyReader.day(date);
+    assert.deepEqual(day.carSoc?.points, [{ at: advance(850), socPercent: 0 }, { at: advance(1710), socPercent: 60 }]);
+    await history.close(); history = await f.open(() => now);
+    assert.deepEqual((await history.historyReader.day(date)).carSoc, day.carSoc);
+    now = new Date(advance(870)); history.record({ ...sample(870), carSoc: { at: advance(860), value: 99 } }, now);
+    now = new Date(advance(900)); await history.flush();
+    assert.equal(await f.count('car_soc_observations'), 2, 'restart and clock rollback cannot reopen finalized SOC quarters');
+    now = new Date(advance(86400));
+    const nextDay = (await history.historyReader.day('2026-01-16')).carSoc;
+    assert.deepEqual(nextDay?.points, []);
+    assert.deepEqual(nextDay?.previous, { at: advance(1710), socPercent: 60 });
+    const api = createApi({ controllerUrl: null, now: () => now, historyReader: history.historyReader });
+    const response = await api.request('/api/history/day?date=2026-01-16');
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).carSoc, nextDay);
+    assert.equal(await f.count('car_soc_observations'), 2, 'idle days never create artificial SOC rows');
+  });
+
   await t.test('unused legacy tables and columns do not block startup or change canonical house reads', async t => {
     const f = await database(t); const initial = await f.open(); await initial.close();
     await f.admin.query(`CREATE TABLE energy_history.house_only_observations
@@ -211,7 +257,7 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
 
   await t.test('fresh observation tables have exactly a real timestamp and value, with valid fixed units', async t => {
     const f = await database(t); await f.open();
-    for (const table of ['battery_observations', 'solar_observations', 'house_observations', 'car_observations']) {
+    for (const table of ['battery_observations', 'car_soc_observations', 'solar_observations', 'house_observations', 'car_observations']) {
       const columns = await f.admin.query(`SELECT column_name FROM information_schema.columns
         WHERE table_schema = 'energy_history' AND table_name = $1 ORDER BY ordinal_position`, [table]);
       assert.deepEqual(columns.rows.map(row => row.column_name), ['observed_at', 'value']);
@@ -219,6 +265,7 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
       for (const value of [-1, Infinity, NaN]) await assert.rejects(f.admin.query(`INSERT INTO energy_history.${table} VALUES ($1, $2)`, [advance(30), value]), { code: '23514' });
     }
     await assert.rejects(f.admin.query('INSERT INTO energy_history.battery_observations VALUES ($1,101)', [advance(31)]), { code: '23514' });
+    await assert.rejects(f.admin.query('INSERT INTO energy_history.car_soc_observations VALUES ($1,101)', [advance(31)]), { code: '23514' });
     for (const table of ['house_forecasts', 'car_forecasts', 'solar_forecasts']) {
       const columns = await f.admin.query(`SELECT column_name FROM information_schema.columns
         WHERE table_schema = 'energy_history' AND table_name = $1 ORDER BY ordinal_position`, [table]);
@@ -359,13 +406,15 @@ test('PostgreSQL finalized observation persistence', { skip: !databaseUrl }, asy
       'battery_forecasts', 'house_forecasts', 'solar_forecasts']) assert.equal(await f.count(table), 0);
     const tables = await f.admin.query(`SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'energy_history' ORDER BY table_name`);
-    assert.deepEqual(tables.rows.map(row => row.table_name), ['battery_forecasts', 'battery_observations', 'car_forecasts', 'car_observations',
+    assert.deepEqual(tables.rows.map(row => row.table_name), ['battery_forecasts', 'battery_observations', 'car_forecasts', 'car_observations', 'car_soc_observations',
       'house_forecasts', 'house_observations', 'household_weather',
       'metadata', 'solar_forecasts', 'solar_observations']);
     assert.deepEqual(await history.dailyEnergyStore.days(), []);
     const day = await history.historyReader.day(date);
     assert.equal(day.dailyEnergy.status, 'unavailable');
     assert.deepEqual(day.battery.points, []);
+    assert.deepEqual(day.carSoc?.points, []);
+    assert.equal(day.carSoc?.previous, null);
     assert.deepEqual(day.observations, { method: 'counter_differences', solar: [], household: [], car: [] });
     assert.deepEqual(day.historicalEstimated.points, []);
     assert.deepEqual(day.energyEstimates, []);

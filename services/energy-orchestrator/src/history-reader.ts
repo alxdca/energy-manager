@@ -5,6 +5,7 @@ import type { EnergyEstimatePoint } from './energy-estimate-history.js';
 import type { ObservationPoint } from './observation-types.js';
 import type { SolarForecast } from './forecast.js';
 import type { CarEstimatePoint } from './car-forecast-history.js';
+import type { CarSocHistorySummary } from './car-soc.js';
 
 type MaybePromise<Value> = Value | Promise<Value>;
 
@@ -25,6 +26,7 @@ export interface HistoryDay {
   observations: { method: 'counter_differences'; solar: ObservationPoint[]; household: ObservationPoint[];
     car?: ObservationPoint[] };
   battery: BatteryHistorySummary;
+  carSoc?: CarSocHistorySummary;
   historicalEstimated: BatteryEstimateSummary;
   solarEstimates: Array<{ start: string; end: string; estimatedProductionKwh: number }>;
   energyEstimates: EnergyEstimatePoint[];

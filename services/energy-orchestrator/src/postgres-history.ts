@@ -16,6 +16,7 @@ import { hasUsableForecast, type SolarForecast } from './forecast.js';
 import { energyEstimatePoints, solarEstimatePoints, type EnergyEstimatePoint, type SolarEstimatePoint } from './energy-estimate-history.js';
 import { summarizeRecordedEnergy } from './recorded-energy.js';
 import { createCarEnergySampler } from './car-energy.js';
+import { createCarSocSampler, type CarSocHistorySummary } from './car-soc.js';
 import { createObservationSampler } from './observation-sampler.js';
 import type { ObservationPoint, ObservationSample } from './observation-types.js';
 
@@ -145,6 +146,7 @@ export async function createPostgresHistory(options: { connectionString: string;
   }
 
   let sampler: ReturnType<typeof createObservationSampler>;
+  let carSocSampler: ReturnType<typeof createCarSocSampler>;
   let batteryOrigin: ReturnType<typeof createBatteryOrigin>;
   let savedObservationState: string;
   let carSampler: ReturnType<typeof createCarEnergySampler>;
@@ -156,6 +158,10 @@ export async function createPostgresHistory(options: { connectionString: string;
       [[observationCheckpointKey, originCheckpointKey, carCheckpointKey]]);
     sampler = createObservationSampler({ now: clock,
       state: checkpoints.rows.find(row => row.key === observationCheckpointKey)?.value });
+    // Both SOC samplers finalize and commit together, so they share the durable
+    // target watermark. Car SOC has no energy-counter baselines of its own.
+    carSocSampler = createCarSocSampler({ now: clock,
+      state: { ...sampler.pending().state, solar: null, household: null } });
     savedObservationState = JSON.stringify(sampler.pending().state);
     carSampler = createCarEnergySampler({ now: clock,
       state: checkpoints.rows.find(row => row.key === carCheckpointKey)?.value });
@@ -173,7 +179,7 @@ export async function createPostgresHistory(options: { connectionString: string;
   function writable() {
     if (closed || closing) throw new Error('Historique PostgreSQL fermé.');
   }
-  async function writePoints(client: pg.PoolClient, channel: 'battery' | 'solar' | 'house' | 'car', points: ObservationPoint[]) {
+  async function writePoints(client: pg.PoolClient, channel: 'battery' | 'solar' | 'house' | 'car' | 'car_soc', points: ObservationPoint[]) {
     if (points.length) await client.query(`INSERT INTO energy_history.${channel}_observations (observed_at, value)
       SELECT x.at::timestamptz, x.value FROM jsonb_to_recordset($1::jsonb) AS x(at text, value double precision)
       ON CONFLICT (observed_at) DO NOTHING`, [JSON.stringify(points)]);
@@ -187,6 +193,7 @@ export async function createPostgresHistory(options: { connectionString: string;
     // Only the paired counter sampler may produce house observations.
     sampler.record({ battery: sample.battery, solar: sample.solar, household: null }, at);
     carSampler.record(sample, at);
+    carSocSampler.record(sample.carSoc ?? null, at);
   }
   /** Independent fast safety accounting; this never supplies observation candidates. */
   function recordTelemetry(telemetry: Telemetry, at = clock()) {
@@ -198,10 +205,12 @@ export async function createPostgresHistory(options: { connectionString: string;
       if (closed) throw new Error('Historique PostgreSQL fermé.');
       sampler.finalize(clock());
       carSampler.finalize(clock());
+      carSocSampler.finalize(clock());
       const snapshot = sampler.pending();
+      const carSoc = carSocSampler.pending();
       const separated = carSampler.pending(), carCheckpoint = JSON.stringify(separated.state);
       const checkpoint = JSON.stringify(snapshot.state), origin = JSON.stringify(batteryOrigin.checkpoint());
-      if (snapshot.battery.length || snapshot.solar.length
+      if (snapshot.battery.length || snapshot.solar.length || carSoc.battery.length
         || separated.solar.length || separated.household.length || carCheckpoint !== savedCarState
         || checkpoint !== savedObservationState || origin !== savedOriginState) {
         await transaction(async client => {
@@ -209,11 +218,13 @@ export async function createPostgresHistory(options: { connectionString: string;
           await writePoints(client, 'solar', snapshot.solar);
           await writePoints(client, 'house', separated.household);
           await writePoints(client, 'car', separated.solar);
+          await writePoints(client, 'car_soc', carSoc.battery);
           if (carCheckpoint !== savedCarState) await writeMetadata(client, carCheckpointKey, carCheckpoint);
           if (checkpoint !== savedObservationState) await writeMetadata(client, observationCheckpointKey, checkpoint);
           if (origin !== savedOriginState) await writeMetadata(client, originCheckpointKey, origin);
         });
         sampler.acknowledge(snapshot);
+        carSocSampler.acknowledge(carSoc);
         carSampler.acknowledge(separated); savedCarState = carCheckpoint;
         savedObservationState = checkpoint; savedOriginState = origin;
       }
@@ -231,13 +242,13 @@ export async function createPostgresHistory(options: { connectionString: string;
     if (!Number.isFinite(day.getTime()) || day.toISOString().slice(0, 10) !== date) throw new Error('Date de relevé invalide.');
     return getCalendarDayBounds(day);
   }
-  async function readPoints(channel: 'battery' | 'solar' | 'household' | 'car', date: string, now: Date): Promise<ObservationPoint[]> {
+  async function readPoints(channel: 'battery' | 'solar' | 'household' | 'car' | 'car_soc', date: string, now: Date): Promise<ObservationPoint[]> {
     const { start, end } = dayBounds(date), table = channel === 'household' ? 'house' : channel;
     const result = await pool.query<{ at: Date; value: number }>(`SELECT observed_at AS at, value
       FROM energy_history.${table}_observations WHERE observed_at >= $1 AND observed_at < $2 AND observed_at <= $3 ORDER BY observed_at`,
     [start, end, now]);
     const values = new Map(result.rows.map(row => [row.at.toISOString(), { at: row.at.toISOString(), value: row.value }]));
-    const pending = channel === 'car' ? carSampler.pending().solar
+    const pending = channel === 'car_soc' ? carSocSampler.pending().battery : channel === 'car' ? carSampler.pending().solar
       : channel === 'household' ? carSampler.pending().household : sampler.pending()[channel];
     for (const point of pending) {
       const at = Date.parse(point.at);
@@ -277,6 +288,24 @@ export async function createPostgresHistory(options: { connectionString: string;
       return { date, timeZone, dayHours: (end.getTime() - start.getTime()) / 3_600_000 as 23 | 24 | 25,
         periodStart: start.toISOString(), periodEnd: end.toISOString(), status: storageError ? 'error' : 'ready', error: storageError,
         points: (await readPoints('battery', date, now)).map(point => ({ at: point.at, socPercent: point.value })) };
+    },
+  };
+  const carSocHistory = {
+    async summary(date: string, now = clock()): Promise<CarSocHistorySummary> {
+      const { start, end } = dayBounds(date);
+      const [points, prior] = await Promise.all([
+        readPoints('car_soc', date, now),
+        pool.query<{ at: Date; value: number }>(`SELECT observed_at AS at, value FROM energy_history.car_soc_observations
+          WHERE observed_at < $1 AND observed_at <= $2 ORDER BY observed_at DESC LIMIT 1`, [start, now]),
+      ]);
+      let previous = prior.rows[0] ? { at: prior.rows[0].at.toISOString(), socPercent: prior.rows[0].value } : null;
+      for (const point of carSocSampler.pending().battery) {
+        if (Date.parse(point.at) < start.getTime() && Date.parse(point.at) <= now.getTime()
+          && (!previous || point.at > previous.at)) previous = { at: point.at, socPercent: point.value };
+      }
+      return { date, timeZone, dayHours: (end.getTime() - start.getTime()) / 3_600_000 as 23 | 24 | 25,
+        periodStart: start.toISOString(), periodEnd: end.toISOString(), status: storageError ? 'error' : 'ready', error: storageError,
+        previous, points: points.map(point => ({ at: point.at, socPercent: point.value })) };
     },
   };
   /** One SQL statement gives metadata and all estimate channels the same MVCC snapshot. */
@@ -408,12 +437,12 @@ export async function createPostgresHistory(options: { connectionString: string;
   const historyReader: HistoryReader = {
     async day(date, now = clock()) {
       const { start, end } = dayBounds(date);
-      const [energy, observed, saved] = await Promise.all([
-        energyDay(date, now), batteryHistory.summary(date, now), savedEstimates(date),
+      const [energy, observed, saved, carSoc] = await Promise.all([
+        energyDay(date, now), batteryHistory.summary(date, now), savedEstimates(date), carSocHistory.summary(date, now),
       ]);
       const solar = saved.metadata?.forecasts.find(value => value.date === date)?.solar;
       return { date, timeZone, periodStart: start.toISOString(), periodEnd: end.toISOString(),
-        dailyEnergy: energy.dailyEnergy, measurements: energy.measurements, battery: observed,
+        dailyEnergy: energy.dailyEnergy, measurements: energy.measurements, battery: observed, carSoc,
         historicalEstimated: { status: 'ready', error: null, points: saved.battery,
           projection: saved.metadata?.projection ?? { status: 'unavailable', reason: 'awaiting_evaluation', assumption: 'automatic_planning' } },
         observations: { method: 'counter_differences' as const, solar: energy.solar, household: energy.household,
@@ -432,6 +461,6 @@ export async function createPostgresHistory(options: { connectionString: string;
     return closing;
   }
   const householdArchive = createHouseholdArchive({ pool, transaction });
-  return { dailyEnergyStore, batteryHistory, batteryOrigin, historyReader, householdArchive,
+  return { dailyEnergyStore, batteryHistory, carSocHistory, batteryOrigin, historyReader, householdArchive,
     record, recordTelemetry, publishForecasts, readForecast, flush, close };
 }

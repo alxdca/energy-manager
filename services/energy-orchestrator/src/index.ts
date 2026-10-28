@@ -4,6 +4,7 @@ import type { Server } from 'node:http';
 import { createApi } from './api.js';
 import { createTelemetryReader } from './status.js';
 import { carEnergyCounter } from './car-energy.js';
+import { carSocObservation } from './car-soc.js';
 import { createEnergyCollector, createObservationCollector } from './energy-collector.js';
 import { createEnergyCounterReader } from './energy-counters.js';
 import { fileURLToPath } from 'node:url';
@@ -46,11 +47,14 @@ const { dailyEnergyStore, batteryHistory } = history;
 const readEnergyCounters = createEnergyCounterReader();
 const collector = createObservationCollector({
   readSample: async () => {
-    const [counters, charger] = await Promise.all([readEnergyCounters(), controls.wattpilot.readStatus().catch(() => null)]);
+    const [counters, charger, car] = await Promise.all([
+      readEnergyCounters(), controls.wattpilot.readStatus().catch(() => null), tesla.readStatus(),
+    ]);
     return {
       battery: counters.battery ?? null,
       solar: counters.solar, household: counters.household,
       car: charger ? carEnergyCounter(charger) : null,
+      carSoc: carSocObservation(car),
     };
   },
   store: { record: history.record, flush: history.flush },

@@ -56,8 +56,9 @@ function loadState(value: unknown): FinalizedObservationState {
 }
 
 /** Volatile samples become immutable real-time observations only after their quarter target passes. */
-export function createObservationSampler(options: { now?: () => Date; state?: unknown } = {}) {
+export function createObservationSampler(options: { now?: () => Date; state?: unknown; sampleFreshnessMs?: number } = {}) {
   const clock = options.now ?? (() => new Date());
+  const sampleFreshnessMs = options.sampleFreshnessMs ?? 40_000;
   const state = loadState(options.state);
   const candidates = new Map<number, Candidate>();
   const queued: Record<Channel, Map<string, ObservationPoint>> = { battery: new Map(), solar: new Map(), household: new Map() };
@@ -104,7 +105,7 @@ export function createObservationSampler(options: { now?: () => Date; state?: un
       } else point = counter(sample[channel], channel);
       if (!point) continue;
       const observed = Date.parse(point.at), target = targetAt(observed);
-      if (observed < now - 40_000 || observed > now + 5000
+      if (observed < now - sampleFreshnessMs || observed > now + 5000
         || (state.finalizedThrough !== null && target <= Date.parse(state.finalizedThrough))) continue;
       const selected = candidates.get(target) ?? {};
       const previous = selected[channel];

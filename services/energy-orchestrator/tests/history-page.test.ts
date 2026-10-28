@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { getCalendarDayBounds } from '../src/policy.js';
 
-test('history controls render one joined table, use quarter-hour records directly and apply eight-value selection', async t => {
+test('history controls render one joined table, use quarter-hour records directly and apply nine-value selection', async t => {
   const ids = [...readFileSync(new URL('../public/pages/history.html', import.meta.url), 'utf8').matchAll(/id="([^"]+)"/g)].map(match => match[1]);
   class Element {
     children: Element[] = [];
@@ -90,7 +90,7 @@ test('history controls render one joined table, use quarter-hour records directl
   for (let index = 0; index < 8; index++) await new Promise(resolve => setImmediate(resolve));
   const tables = () => get('results').all().filter(node => node.tagName === 'table');
   const checkboxes = get('field-groups').all().filter(node => node.tagName === 'input');
-  assert.equal(checkboxes.length, 8);
+  assert.equal(checkboxes.length, 9);
   assert.equal(elements.has('history-step'), false);
   assert.equal(elements.has('history-aggregation'), true);
   assert.equal(elements.has('history-solar-version'), false);
@@ -109,7 +109,7 @@ test('history controls render one joined table, use quarter-hour records directl
   assert.equal(series('chart-solar').length, 4, 'Solar estimates also use quarter-hour bars');
   assert.match(series('chart-solar')[0].children[0].textContent, /00:15.*250 Wh/);
   assert.ok(Math.abs(Number(solarBars[0].attributes.get('width')) - 608 / 96 * .34) < 1e-9);
-  assert.match(get('chart-frequency').textContent, /Solaire, maison et batterie : 15 min/);
+  assert.match(get('chart-frequency').textContent, /Solaire, maison, voiture et batterie : 15 min/);
   const housePoints = series('chart-demand-measured-point');
   assert.equal(housePoints.length, 4, 'The chart must keep every measured quarter instead of summing by hour');
   assert.match(housePoints[1].children[0].textContent, /00:30.*100 Wh/);
@@ -123,18 +123,18 @@ test('history controls render one joined table, use quarter-hour records directl
   assert.equal(body().children[0].children[0].textContent, '00:00–00:15');
   assert.match(body().children[0].children[0].title, /00:00:00 → .*00:15:00/);
   assert.equal(body().children.at(-1)!.children[0].textContent, '23:45–24:00');
-  assert.equal(body().children[0].children.length, 9, 'one time column plus eight values');
+  assert.equal(body().children[0].children.length, 10, 'one time column plus nine values');
   assert.equal(body().children[0].children[6].textContent, '50', 'battery uses the dedicated quarter-hour history');
   const measuredHouse = checkboxes.find(node => node.value === 'houseMeasured')!;
   measuredHouse.checked = false; measuredHouse.fire('change');
-  assert.equal(body().children[0].children.length, 8);
+  assert.equal(body().children[0].children.length, 9);
   assert.equal(tables().length, 1);
   get('select-none').fire('click');
   assert.equal(tables().length, 0);
   assert.match(get('status').textContent, /Aucune valeur sélectionnée/);
   get('select-all').fire('click');
   assert.equal(tables().length, 1);
-  assert.equal(body().children[0].children.length, 9);
+  assert.equal(body().children[0].children.length, 10);
   assert.doesNotMatch(get('day-summary').textContent, /Zurich|UTC|horaire/);
   assert.equal(calls.length, 1);
   const settle = async () => { for (let index = 0; index < 35; index++) await new Promise(resolve => setImmediate(resolve)); };
@@ -151,7 +151,7 @@ test('history controls render one joined table, use quarter-hour records directl
   assert.equal(series('chart-solar').length, 1);
   assert.match(series('chart-solar')[0].children[0].textContent, /01:00.*1[  '’]000 Wh/);
   assert.ok(Math.abs(Number(series('chart-solar-measured')[0].attributes.get('width')) - 608 / 24 * .34) < 1e-9);
-  assert.match(get('chart-frequency').textContent, /Solaire, maison et batterie : 1 h/);
+  assert.match(get('chart-frequency').textContent, /Solaire, maison, voiture et batterie : 1 h/);
   assert.equal(series('chart-demand-measured-point').length, 2, 'House and solar use the same hourly totals');
   assert.match(series('chart-demand-measured-point')[0].children[0].textContent, /01:00.*400 Wh/);
   assert.equal(series('chart-battery-measured-point').length, 2, 'Battery points also use the selected hourly intervals');
@@ -189,7 +189,7 @@ test('history controls render one joined table, use quarter-hour records directl
   assert.equal(new URL(location.href).searchParams.has('view'), false);
   assert.equal(series('chart-solar').length, 4, 'Switching back restores quarter-hour solar bars on a DST day');
   assert.ok(Math.abs(Number(series('chart-solar-measured')[0].attributes.get('width')) - 608 / 100 * .34) < 1e-9);
-  assert.match(get('chart-frequency').textContent, /Solaire, maison et batterie : 15 min/);
+  assert.match(get('chart-frequency').textContent, /Solaire, maison, voiture et batterie : 15 min/);
   assert.equal(series('chart-demand-measured-point').length, 4, 'Switching back restores quarter-hour house points');
   assert.equal(series('chart-battery-measured-point').length, 4, 'Switching back restores quarter-hour battery points');
 

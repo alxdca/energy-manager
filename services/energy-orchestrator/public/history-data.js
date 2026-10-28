@@ -12,7 +12,7 @@ export const historyGroups = [
   { id: 'solar', label: 'Solaire', columns: [{ key: 'solarEstimated', label: 'Prévu', unit: 'Wh' }, { key: 'solarMeasured', label: 'Mesuré', unit: 'Wh' }] },
   { id: 'house', label: 'Maison', columns: [{ key: 'houseEstimated', label: 'Prévu', unit: 'Wh' }, { key: 'houseMeasured', label: 'Mesuré', unit: 'Wh' }] },
   { id: 'battery', label: 'Batterie', columns: [{ key: 'batteryEstimated', label: 'Prévu', unit: '%' }, { key: 'batteryMeasured', label: 'Mesuré', unit: '%' }] },
-  { id: 'car', label: 'Voiture', columns: [{ key: 'carEstimated', label: 'Prévu', unit: 'Wh' }, { key: 'carMeasured', label: 'Mesuré', unit: 'Wh' }] },
+  { id: 'car', label: 'Voiture', columns: [{ key: 'carEstimated', label: 'Prévu', unit: 'Wh' }, { key: 'carMeasured', label: 'Mesuré', unit: 'Wh' }, { key: 'carSocMeasured', label: 'Niveau relevé', unit: '%' }] },
 ];
 export const allHistorySelection = historyGroups.flatMap(group => group.columns.map(column => column.key));
 export const defaultHistorySelection = [...allHistorySelection];
@@ -66,8 +66,8 @@ function householdSourceNote(day, start, end) {
   const scope = points.length ? 'Maison prévue hors recharge voiture.' : '';
   return [average ? `Secours : moyenne récente (${average} tranches).` : '', baseline ? `Secours : base configurée (${baseline} tranches).` : '', scope].filter(Boolean).join(' ');
 }
-function batteryObservations(day) {
-  return (Array.isArray(day?.battery?.points) ? day.battery.points : [])
+function socObservations(history) {
+  return (Array.isArray(history?.points) ? history.points : [])
     .map(point => ({ at: instant(point?.at), value: point?.socPercent }))
     .filter(point => Number.isFinite(point.at) && validSoc(point.value)).sort((a, b) => a.at - b.at);
 }
@@ -91,7 +91,7 @@ function measuredNote(readings) {
   return `Somme de ${readings.count} relevés d’énergie conservés, sans moyenne. Relevés horodatés ${range}.`;
 }
 
-/** Aggregate only within each real Zurich day; missing periods remain unknown. */
+/** Aggregate within each real Zurich day; empty completed car periods display zero. */
 export function historyTable(dayOrDays, selection = defaultHistorySelection, aggregation = 'quarter') {
   if (aggregation !== 'day') return dayTable(dayOrDays, selection, aggregation);
   const days = Array.isArray(dayOrDays) ? dayOrDays : [dayOrDays];
@@ -110,17 +110,22 @@ function dayTable(day, selection, aggregation = 'quarter') {
   if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end || start % quarterMs !== 0 || end % quarterMs !== 0) return { groups, columns, rows: [], hasData: false };
   const recordedSolar = recordedObservations(day, 'solar'), recordedHouse = recordedObservations(day, 'household');
   const recordedCar = recordedObservations(day, 'car');
+  const hasCarObservations = day?.observations?.method === 'counter_differences' && Array.isArray(day.observations.car);
+  const now = Date.now();
   const consumption = estimatedIntervals(day?.householdPredictions ?? day?.energyEstimates, 'estimatedConsumptionKwh');
   const production = estimatedIntervals(day?.solarEstimates, 'estimatedProductionKwh');
   const charging = estimatedIntervals(day?.carEstimates, 'estimatedChargingKwh');
-  const observations = batteryObservations(day), predictions = batteryPredictions(day);
+  const observations = socObservations(day?.battery), predictions = batteryPredictions(day);
+  const carSoc = socObservations({ points: [day?.carSoc?.previous, ...(Array.isArray(day?.carSoc?.points) ? day.carSoc.points : [])] })
+    .filter(point => point.at <= now && point.at < end);
   const rows = [];
-  let observedIndex = 0;
+  let observedIndex = 0, carSocIndex = 0, lastCarSoc = null;
   const stepMs = aggregation === 'day' ? end - start : aggregation === 'hour' ? 3600000 : quarterMs;
   for (let from = start; from < end; from += stepMs) {
     const to = Math.min(from + stepMs, end);
     const house = measuredEnergy(from, to, recordedHouse), pv = measuredEnergy(from, to, recordedSolar);
     const car = measuredEnergy(from, to, recordedCar);
+    const noRecordedCharging = hasCarObservations && car.value === null && to <= now;
     const houseEstimate = estimatedEnergy(consumption, from, to), solarEstimate = estimatedEnergy(production, from, to);
     const carEstimate = estimatedEnergy(charging, from, to);
     let observed = null;
@@ -128,17 +133,21 @@ function dayTable(day, selection, aggregation = 'quarter') {
       if (observations[observedIndex].at >= from) observed = observations[observedIndex];
       observedIndex++;
     }
+    while (carSocIndex < carSoc.length && carSoc[carSocIndex].at < to) lastCarSoc = carSoc[carSocIndex++];
+    const observedCarSoc = to <= now ? lastCarSoc : null;
     let predicted = null, predictedAt = null;
     for (let at = from + quarterMs; at <= to; at += quarterMs) {
       const value = predictions.get(at);
       if (validSoc(value)) { predicted = value; predictedAt = at; }
     }
-    const values = { houseMeasured: house.value, houseEstimated: houseEstimate.value, carMeasured: car.value, carEstimated: carEstimate.value,
+    const values = { houseMeasured: house.value, houseEstimated: houseEstimate.value, carMeasured: noRecordedCharging ? 0 : car.value, carEstimated: carEstimate.value,
+      carSocMeasured: observedCarSoc?.value ?? null,
       batteryMeasured: observed?.value ?? null, batteryEstimated: predicted ?? null,
       solarMeasured: pv.value, solarEstimated: solarEstimate.value };
     const notes = {
       houseMeasured: `${measuredNote(house)} Maison hors recharge voiture.`,
-      carMeasured: measuredNote(car),
+      carMeasured: noRecordedCharging ? 'Aucune recharge enregistrée dans cette période ; énergie supposée nulle (0 Wh).' : measuredNote(car),
+      carSocMeasured: observedCarSoc ? `Dernier niveau connu de la voiture : ${formatHistoryValue(new Date(observedCarSoc.at).toISOString(), { type: 'timestamp' })}.${observedCarSoc.at < from ? ' Niveau supposé inchangé depuis ce relevé.' : ''}` : 'Aucun niveau de charge connu pour la voiture dans cette période.',
       carEstimated: `${estimatedNote(carEstimate)} Recharge automatique programmée ; le mode manuel et le mode éco sans allocation restent inconnus.`,
       solarMeasured: measuredNote(pv),
       houseEstimated: [aggregation !== 'quarter' ? estimatedNote(houseEstimate) : values.houseEstimated === null ? 'Aucune estimation enregistrée pour cette tranche.' : 'Estimation enregistrée pour cette tranche de 15 min.', householdSourceNote(day, from, to)].filter(Boolean).join(' '),

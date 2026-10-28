@@ -82,7 +82,7 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
   const tooltip = (element, label) => add('title', {}, label, element);
   add('title', {}, 'Données énergétiques de la journée');
   const chartPeriod = chartView === 'quarter' ? 'par tranches de 15 minutes' : 'par heure';
-  add('desc', {}, `Solaire ${chartPeriod}, prévu en barres larges et relevé en barres superposées. Maison ${chartPeriod}, prévue en ligne pointillée et relevée en ligne continue. Énergie en Wh sur l’axe gauche. Batterie ${chartPeriod}, relevée en violet continu et prévue en pointillé sur l’axe droit ; dernier niveau de chaque période, sans moyenne. Chaque heure indique la fin de la période et aligne l’énergie avec le niveau de batterie. ${rows.length} ${chartView === 'quarter' ? 'tranches de 15 minutes' : 'heures'}, fuseau Europe/Zurich.`);
+  add('desc', {}, `Solaire ${chartPeriod}, prévu en barres larges et relevé en barres superposées. Maison ${chartPeriod}, prévue en ligne pointillée et relevée en ligne continue. Énergie en Wh sur l’axe gauche. Batterie ${chartPeriod}, relevée en violet continu et prévue en pointillé sur l’axe droit ; dernier niveau de chaque période, sans moyenne. Niveau de charge de la voiture en vert sur l’axe droit ; dernier relevé conservé jusqu’au suivant, y compris en veille. Chaque heure indique la fin de la période et aligne l’énergie avec le niveau de batterie. ${rows.length} ${chartView === 'quarter' ? 'tranches de 15 minutes' : 'heures'}, fuseau Europe/Zurich.`);
   add('text', { x: left, y: 13, class: 'chart-axis' }, 'Wh');
   for (const value of [0, ceiling / 2, ceiling]) {
     add('line', { x1: left, x2: right, y1: y(value), y2: y(value), class: 'chart-grid' });
@@ -119,7 +119,7 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
       if (!numeric(value)) { finish(); return; }
       segment.push(`${x(index)},${y(value)}`);
       const point = add('circle', { cx: x(index), cy: y(value), r: 3, class: `${className}-point` });
-      tooltip(point, `${row.label} · ${label} : ${chartNumber.format(value * 1000)} Wh${['houseEstimated', 'carEstimated'].includes(key) && row.notes?.[key] ? `\n${row.notes[key]}` : ''}`);
+      tooltip(point, `${row.label} · ${label} : ${chartNumber.format(value * 1000)} Wh${['houseEstimated', 'carEstimated', 'carMeasured'].includes(key) && row.notes?.[key] ? `\n${row.notes[key]}` : ''}`);
     });
     finish();
   };
@@ -133,6 +133,7 @@ export function renderHistoryChart(day, chart, svg, status, view = 'quarter') {
   for (const [key, className, label] of [
     ['batteryMeasured', 'chart-battery-measured', 'Batterie relevée'],
     ['batteryEstimated', 'chart-battery-estimated', 'Batterie prévue'],
+    ['carSocMeasured', 'chart-car-soc', 'Niveau voiture'],
   ]) {
     let segment = [];
     const finish = () => {
@@ -277,7 +278,7 @@ function initializeHistory() {
       fragment.append(make('p', 'panel history-no-selection', 'Aucune valeur détaillée enregistrée pour cette période et cette sélection.'));
     }
     elements.results.replaceChildren(fragment);
-    elements['chart-frequency'].textContent = `Solaire, maison et batterie : ${state.view === 'quarter' ? '15 min' : '1 h'}`;
+    elements['chart-frequency'].textContent = `Solaire, maison, voiture et batterie : ${state.view === 'quarter' ? '15 min' : '1 h'}`;
     const batteryStatus = byId('battery-status');
     if (batteryStatus) {
       batteryStatus.textContent = batteryForecastMessage(state.day);

@@ -2,10 +2,10 @@
 export const postgresSchema = `
 CREATE SCHEMA IF NOT EXISTS energy_history;
 CREATE TABLE IF NOT EXISTS energy_history.metadata (key text PRIMARY KEY, value jsonb NOT NULL);
-${(['battery', 'house', 'car', 'solar'] as const).map(channel => `
+${(['battery', 'car_soc', 'house', 'car', 'solar'] as const).map(channel => `
 CREATE TABLE IF NOT EXISTS energy_history.${channel}_observations (
   observed_at timestamptz PRIMARY KEY CHECK (isfinite(observed_at)),
-  value double precision NOT NULL CHECK (value >= 0 AND value < 'Infinity'::double precision${channel === 'battery' ? ' AND value <= 100' : ''})
+  value double precision NOT NULL CHECK (value >= 0 AND value < 'Infinity'::double precision${channel === 'battery' || channel === 'car_soc' ? ' AND value <= 100' : ''})
 );`).join('\n')}
 CREATE TABLE IF NOT EXISTS energy_history.battery_forecasts (
   target_at timestamptz PRIMARY KEY CHECK (isfinite(target_at) AND EXTRACT(EPOCH FROM target_at) % 900 = 0),

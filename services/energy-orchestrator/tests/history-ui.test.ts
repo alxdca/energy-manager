@@ -52,11 +52,15 @@ test('chart aligns energy totals and latest SOC at the same period-end timestamp
   day.solarEstimates = [0, 1, 2, 3].map(i => ({ start: at(i), end: at(i + 1), estimatedProductionKwh: 2.475 / 4 }));
   day.energyEstimates = [{ start: at(0), end: at(1), estimatedConsumptionKwh: .260 }];
   day.battery.points = [50, 51, 52, 53].map((socPercent, i) => ({ at: observedAt(i), socPercent }));
+  Object.assign(day, { carSoc: { previous: null, points: [{ at: observedAt(0), socPercent: 40 }] } });
   day.historicalEstimated.points = [60, 61, 62, 63].map((socPercent, i) => ({ at: at(i + 1), socPercent }));
   const chart = new Element('div'), svg = new Element('svg'), status = new Element('p');
   const series = (name: string) => svg.children.filter(node => node.attributes.get('class') === name);
   renderHistoryChart(day, chart, svg, status, 'hour');
-  assert.match(series('chart-car-measured-point')[0].children[0].textContent, /11:00.*Recharge voiture.*200 Wh/);
+  assert.match(series('chart-car-measured-point')[10].children[0].textContent, /11:00.*Recharge voiture.*200 Wh/);
+  assert.equal(series('chart-car-measured-point').length, 13, 'only completed hours get a zero fallback');
+  assert.match(series('chart-car-measured-point')[0].children[0].textContent, /Recharge voiture : 0 Wh\n.*supposée nulle/);
+  assert.equal(series('chart-car-measured').length, 1, 'zero periods keep the charging line continuous');
   assert.equal(historyTable(day, ['carMeasured'], 'hour').rows[10].values.carMeasured, .2);
   assert.equal(historyTable(day, ['carEstimated'], 'hour').rows[10].values.carEstimated, .15);
   assert.match(series('chart-car-estimated-point')[0].children[0].textContent, /Recharge voiture prévue.*150 Wh/);
@@ -81,12 +85,17 @@ test('chart aligns energy totals and latest SOC at the same period-end timestamp
   assert.match(series('chart-battery-estimated-point')[0].children[0].textContent, /^11:00 · Batterie prévue : 63 %\n/);
   assert.equal(series('chart-battery-measured-point')[0].attributes.get('cx'), house.attributes.get('cx'));
   assert.equal(series('chart-battery-estimated-point')[0].attributes.get('cx'), house.attributes.get('cx'));
+  assert.equal(series('chart-car-soc-point').length, 3, 'car SOC carries through completed idle hours');
+  assert.match(series('chart-car-soc-point')[1].children[0].textContent, /12:00 · Niveau voiture : 40 %\n.*supposé inchangé/);
+  assert.equal(series('chart-car-soc-point')[0].attributes.get('cx'), house.attributes.get('cx'));
+  assert.equal(Number(series('chart-car-soc-point')[0].attributes.get('cy')), 208 - .4 * (208 - 24), 'car SOC uses the percent axis');
 
   renderHistoryChart(day, chart, svg, status, 'quarter');
   assert.equal(series('chart-demand-measured-point').length, 4);
   assert.equal(series('chart-solar-measured').length, 4);
   assert.equal(series('chart-battery-measured-point').length, 4);
   assert.equal(series('chart-battery-estimated-point').length, 4);
+  assert.equal(series('chart-car-soc-point').length, 12, 'car SOC carries across quarter-hour gaps');
   assert.match(series('chart-demand-measured-point')[0].children[0].textContent, /10:15.*400 Wh/);
   assert.match(series('chart-solar-measured')[0].children[0].textContent, /10:15.*300 Wh/);
   const quarter = historyTable(day).rows.find((row: any) => row.label === '10:30');
@@ -104,15 +113,15 @@ test('chart aligns energy totals and latest SOC at the same period-end timestamp
 
 test('the joined table exposes separate car charging alongside household values from quarter-hour history without timestamps or source versions', () => {
   assert.deepEqual(historyGroups.map((group: any) => [group.id, group.label]), [['solar', 'Solaire'], ['house', 'Maison'], ['battery', 'Batterie'], ['car', 'Voiture']]);
-  assert.deepEqual(allHistorySelection, ['solarEstimated', 'solarMeasured', 'houseEstimated', 'houseMeasured', 'batteryEstimated', 'batteryMeasured', 'carEstimated', 'carMeasured']);
+  assert.deepEqual(allHistorySelection, ['solarEstimated', 'solarMeasured', 'houseEstimated', 'houseMeasured', 'batteryEstimated', 'batteryMeasured', 'carEstimated', 'carMeasured', 'carSocMeasured']);
   assert.deepEqual(defaultHistorySelection, allHistorySelection);
   const day = fixture(), original = structuredClone(day);
   const table = historyTable(day, allHistorySelection);
   assert.equal(table.rows.length, 96);
   assert.equal(table.rows[0].label, '00:15');
   assert.equal(table.rows.at(-1).label, '24:00');
-  assert.equal(table.columns.length, 8);
-  assert.deepEqual(table.columns.map((column: any) => column.label), ['Prévu', 'Mesuré', 'Prévu', 'Mesuré', 'Prévu', 'Mesuré', 'Prévu', 'Mesuré']);
+  assert.equal(table.columns.length, 9);
+  assert.deepEqual(table.columns.map((column: any) => column.label), ['Prévu', 'Mesuré', 'Prévu', 'Mesuré', 'Prévu', 'Mesuré', 'Prévu', 'Mesuré', 'Niveau relevé']);
   assert.equal(table.hasData, true);
   near(table.rows[0].values.houseMeasured, .25);
   near(table.rows[0].values.houseEstimated, .5);
@@ -137,6 +146,78 @@ test('quarter measurements preserve zero and absent channels without extrapolati
   assert.match(table.rows[0].notes.solarMeasured, /1 relevés/);
   day.observations.solar = [];
   assert.equal(historyTable(day, ['houseMeasured', 'solarMeasured']).hasData, false);
+});
+
+test('empty completed car charging periods display zero while current, future and absent channels stay unknown', t => {
+  const day = fixture(), start = Date.parse(day.periodStart);
+  let now = start + 5.5 * quarterMs;
+  t.mock.method(Date, 'now', () => now);
+  Object.assign(day.observations, { car: [
+    { at: new Date(start + quarterMs).toISOString(), value: 200 },
+    { at: new Date(start + 2 * quarterMs).toISOString(), value: 0 },
+  ] });
+  const original = structuredClone(day);
+  const rows = historyTable(day, ['carMeasured', 'carEstimated', 'houseMeasured', 'batteryMeasured']).rows;
+  assert.deepEqual(rows.slice(0, 7).map((row: any) => row.values.carMeasured), [0, .2, 0, 0, 0, null, null]);
+  assert.match(rows[0].notes.carMeasured, /supposée nulle/);
+  assert.match(rows[2].notes.carMeasured, /1 relevés/);
+  assert.equal(rows[0].values.carEstimated, null);
+  assert.equal(rows[0].values.batteryMeasured, null);
+  assert.equal(historyTable(day, ['carMeasured'], 'hour').rows[0].values.carMeasured, .2);
+  assert.equal(historyTable(day, ['carMeasured'], 'hour').rows[1].values.carMeasured, null);
+  assert.deepEqual(day, original);
+
+  const empty = { ...day, observations: { ...day.observations, car: [] } };
+  assert.equal(historyTable(empty, ['carMeasured'], 'hour').rows[0].values.carMeasured, 0);
+  assert.equal(historyTable(empty, ['carMeasured'], 'day').rows[0].values.carMeasured, null);
+  now = Date.parse(day.periodEnd);
+  assert.equal(historyTable(empty, ['carMeasured'], 'day').rows[0].values.carMeasured, 0);
+  assert.ok(historyTable(empty, ['carMeasured']).rows.every((row: any) => row.values.carMeasured === 0));
+  assert.ok(historyTable(fixture(), ['carMeasured']).rows.every((row: any) => row.values.carMeasured === null));
+});
+
+test('car SOC carries actual last-known readings through idle quarters and midnight without filling the future', t => {
+  const day = fixture(), start = Date.parse(day.periodStart);
+  t.mock.method(Date, 'now', () => start + 5.5 * quarterMs);
+  const carSoc = { previous: { at: new Date(start - 3600000).toISOString(), socPercent: 40 }, points: [
+    { at: new Date(start + quarterMs).toISOString(), socPercent: 50 },
+    { at: new Date(start + 3 * quarterMs).toISOString(), socPercent: 0 },
+    { at: new Date(start + 4 * quarterMs).toISOString(), socPercent: 101 },
+    { at: new Date(start + 6 * quarterMs).toISOString(), socPercent: 99 },
+  ] };
+  const input = { ...day, carSoc }, original = structuredClone(input);
+  const rows = historyTable(input, ['carSocMeasured', 'batteryMeasured']).rows;
+  assert.deepEqual(rows.slice(0, 7).map((row: any) => row.values.carSocMeasured), [40, 50, 50, 0, 0, null, null]);
+  assert.match(rows[0].notes.carSocMeasured, /14\.01\.2026 23:00:00.*supposé inchangé/);
+  assert.match(rows[2].notes.carSocMeasured, /00:15:00.*supposé inchangé/);
+  assert.equal(rows[0].values.batteryMeasured, null);
+  assert.equal(historyTable(input, ['carSocMeasured'], 'hour').rows[0].values.carSocMeasured, 0);
+  assert.equal(historyTable(input, ['carSocMeasured'], 'hour').rows[1].values.carSocMeasured, null);
+  assert.deepEqual(input, original);
+  const noPrior = { ...input, carSoc: { ...carSoc, previous: null } };
+  assert.equal(historyTable(noPrior, ['carSocMeasured']).rows[0].values.carSocMeasured, null);
+  assert.ok(historyTable(day, ['carSocMeasured']).rows.every((row: any) => row.values.carSocMeasured === null));
+});
+
+test('car SOC carry-forward uses real quarter boundaries on 23- and 25-hour Zurich days', t => {
+  let now = 0;
+  t.mock.method(Date, 'now', () => now);
+  for (const [start, end, quarters] of [
+    ['2026-03-28T23:00:00.000Z', '2026-03-29T22:00:00.000Z', 92],
+    ['2026-10-24T22:00:00.000Z', '2026-10-25T23:00:00.000Z', 100],
+  ] as const) {
+    now = Date.parse(end);
+    const day = { ...fixture(start, end), carSoc: {
+      previous: { at: new Date(Date.parse(start) - quarterMs).toISOString(), socPercent: 60 },
+      points: [{ at: new Date(Date.parse(start) + 8 * quarterMs).toISOString(), socPercent: 0 }],
+    } };
+    const rows = historyTable(day, ['carSocMeasured']).rows;
+    assert.equal(rows.length, quarters);
+    assert.ok(rows.slice(0, 8).every((row: any) => row.values.carSocMeasured === 60));
+    assert.ok(rows.slice(8).every((row: any) => row.values.carSocMeasured === 0));
+    assert.equal(historyTable(day, ['carSocMeasured'], 'hour').rows.at(-1).values.carSocMeasured, 0);
+    assert.equal(historyTable(day, ['carSocMeasured'], 'day').rows[0].values.carSocMeasured, 0);
+  }
 });
 
 test('fallback predictions are labeled in quarter and hourly notes without filling measurement gaps', () => {

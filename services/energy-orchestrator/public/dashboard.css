@@ -210,7 +210,7 @@ body[data-page=previsions] .forecast-panel{margin-top:0;max-width:760px}
 .chart-battery-axis{fill:var(--battery-chart)}
 .chart-battery-measured,.chart-battery-estimated{fill:none;stroke:var(--battery-chart);stroke-width:2;stroke-linejoin:round;vector-effect:non-scaling-stroke}
 .chart-battery-estimated{stroke-dasharray:6 4}
-.chart-demand-point,.chart-demand-measured-point,.chart-battery-measured-point,.chart-battery-estimated-point{display:none}
+.chart-demand-point,.chart-demand-measured-point,.chart-battery-measured-point,.chart-battery-estimated-point,.chart-car-soc-point{display:none}
 /* Read-only planner details share the dashboard palette and phone navigation. */
 .planner-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:start}
 .planner-panel{padding:24px;overflow-wrap:anywhere}.planner-panel .panel-heading{align-items:flex-start}.planner-panel .panel-heading>.icon{width:18px;height:18px;flex-shrink:0}
@@ -229,6 +229,9 @@ body[data-page=previsions] .forecast-panel{margin-top:0;max-width:760px}
 
 .chart-car-measured{fill:none;stroke:#78bce8;stroke-width:2;stroke-linejoin:round;vector-effect:non-scaling-stroke}
 .chart-car-measured-point{fill:#78bce8}
+:root{--car-soc-chart:#008574}:root[data-theme=dark]{--car-soc-chart:#6bdac1}
+.chart-legend-car-soc:before{content:"";width:18px;border-top:2px solid var(--car-soc-chart)}
+.chart-car-soc{fill:none;stroke:var(--car-soc-chart);stroke-width:2;stroke-linejoin:round;vector-effect:non-scaling-stroke}
 .chart-legend-car-measured:before{content:"";width:18px;border-top:2px solid #78bce8}
 
 .chart-car-estimated{fill:none;stroke:#78bce8;stroke-width:2;stroke-dasharray:5 3;stroke-linejoin:round;vector-effect:non-scaling-stroke}
